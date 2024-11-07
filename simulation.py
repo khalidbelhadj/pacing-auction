@@ -3,6 +3,7 @@ from math import ceil
 from random import random, randint
 import sys
 from typing import NamedTuple, Optional
+import json
 
 from elimination import All, Elimination
 
@@ -25,7 +26,13 @@ MAX_STEPS = 10 * 10**2
 
 class Simulation:
     def __init__(
-        self, n: int = 10, m: int = 3, q: int = 100, elimination: Elimination = All()
+        self,
+        n: int = 10,
+        m: int = 3,
+        q: int = 100,
+        elimination: Elimination = All(),
+        file: Optional[str] = None,
+        check_cycle: bool = False,
     ) -> None:
         """
         Initialize the simulation with given parameters.
@@ -35,19 +42,34 @@ class Simulation:
         :param q: Quality factor
         :param elimination: Elimination strategy
         """
-        self.n: int = n
-        self.m: int = m
-        self.q: int = q
         self.elimination = elimination
+        self.check_cycle = check_cycle
 
-        # budget[bidder]
-        self.budget = [random() for _ in range(n)]
+        if file:
+            with open(file) as f:
+                state = json.load(f)
+                try:
+                    self.n = state["n"]
+                    self.m = state["m"]
+                    self.q = state["q"]
+                    self.budget = state["budget"]
+                    self.valuation = state["valuation"]
+                    self.alpha = state["alpha"]
+                except KeyError:
+                    raise ValueError("Invalid state file")
+        else:
+            self.n: int = n
+            self.m: int = m
+            self.q: int = q
 
-        # valuation[auction][bidder]
-        self.valuation = [[random() for _ in range(n)] for _ in range(m)]
+            # budget[bidder]
+            self.budget = [random() for _ in range(n)]
 
-        # alpha[bidder]
-        self.alpha = [randint(0, q) / q for _ in range(n)]
+            # valuation[auction][bidder]
+            self.valuation = [[random() for _ in range(n)] for _ in range(m)]
+
+            # alpha[bidder]
+            self.alpha = [randint(0, q) / q for _ in range(n)]
 
     def eliminate(self, bidder: int, auction: int) -> None:
         """
@@ -161,11 +183,33 @@ class Simulation:
         if max_utility > current_utility:
             self.alpha[bidder] = max_alpha
 
+    def dump(self) -> None:
+        """
+        Dump the current state to a JSON file
+        """
+
+        with open("state.json", "w") as f:
+            json.dump(
+                {
+                    "n": self.n,
+                    "m": self.m,
+                    "q": self.q,
+                    "budget": self.budget,
+                    "valuation": self.valuation,
+                    "alpha": self.alpha,
+                },
+                f,
+                indent=4,
+            )
+
     def run(self) -> list[Allocation]:
         """
         Run the simulation
         """
 
+        self.dump()
+
+        seen = set([tuple(self.alpha)])
         for i in range(MAX_STEPS):
             utility_change = False
             # Best response for each bidder sequentially
@@ -174,6 +218,12 @@ class Simulation:
                 self.best_response(bidder)
                 new_utility = self.utility(bidder, self.run_fpa())
                 utility_change = utility_change or new_utility > current_utility
+
+            if self.check_cycle:
+                if tuple(self.alpha) in seen:
+                    print("Cycle", i)
+                    break
+                seen.add(tuple(self.alpha))
 
             if not utility_change:
                 print("PNE found at iteration", i)

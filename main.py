@@ -3,7 +3,7 @@ from simulation import Simulation
 
 
 def main() -> None:
-    sim = Simulation(elimination=Subsequent())
+    sim = Simulation(file="state.json", elimination=Subsequent(), check_cycle=True)
     allocations = sim.run()
     for a in allocations:
         print(a)
