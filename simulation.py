@@ -32,7 +32,7 @@ class Simulation:
         q: int = 100,
         elimination: Elimination = All(),
         file: Optional[str] = None,
-        check_cycle: bool = False,
+        check_cycle: bool = True,
     ) -> None:
         """
         Initialize the simulation with given parameters.
