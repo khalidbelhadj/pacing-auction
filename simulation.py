@@ -228,6 +228,7 @@ class Simulation:
             if not utility_change:
                 print("PNE found at iteration", i)
                 break
+
         else:
             print(f"PNE not found after {MAX_STEPS:,} iterations", file=sys.stderr)
         return self.step()
