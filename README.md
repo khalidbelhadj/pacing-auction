@@ -4,6 +4,8 @@
 - `simulation.py`: simulation state and logic
 - `elimination.py`: interface, and implementations of elimination strategies
 
+## Tasks
+
 - [x] Model simulation state
 - [x] Violation check
 - [x] Run FPA
