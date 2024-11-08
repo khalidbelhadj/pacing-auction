@@ -7,12 +7,6 @@ class Elimination(Protocol):
     An interface for elimination procedures
     """
 
-    def __init__(self) -> None:
-        """
-        Initialize the elimination procedure. Some procedures require extra state
-        """
-        ...
-
     def eliminate(self, bidder: int, auction: int) -> None:
         """
         Eliminate the bidder, given the auction
@@ -44,6 +38,21 @@ class Subsequent:
 class All:
     """
     Eliminate the bidder from all auctions
+    """
+
+    def __init__(self) -> None:
+        self.eliminated: set[int] = set()
+
+    def eliminate(self, bidder: int, auction: int) -> None:
+        self.eliminated.add(bidder)
+
+    def is_eliminated(self, bidder: int, auction: int) -> bool:
+        return bidder in self.eliminated
+
+
+class Current:
+    """
+    Eliminate the bidder from a specific auction
     """
 
     def __init__(self) -> None:

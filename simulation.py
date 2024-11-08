@@ -54,23 +54,29 @@ class Simulation:
                     self.m = state["m"]
                     self.q = state["q"]
                     self.budget = state["budget"]
+                    assert len(self.budget) == self.n
                     self.valuation = state["valuation"]
+                    assert len(self.valuation) == self.m and (
+                        self.m == 0 or len(self.valuation[0]) == self.n
+                    )
                     self.alpha = state["alpha"]
+                    assert len(self.alpha) == self.n
                 except KeyError:
                     raise ValueError("Invalid state file")
-        else:
-            self.n: int = n
-            self.m: int = m
-            self.q: int = q
+                return
 
-            # budget[bidder]
-            self.budget = [random() for _ in range(n)]
+        self.n: int = n
+        self.m: int = m
+        self.q: int = q
 
-            # valuation[auction][bidder]
-            self.valuation = [[random() for _ in range(n)] for _ in range(m)]
+        # budget[bidder]
+        self.budget = [random() for _ in range(n)]
 
-            # alpha[bidder]
-            self.alpha = [randint(0, q) / q for _ in range(n)]
+        # valuation[auction][bidder]
+        self.valuation = [[random() for _ in range(n)] for _ in range(m)]
+
+        # alpha[bidder]
+        self.alpha = [randint(0, q) / q for _ in range(n)]
 
     def eliminate(self, bidder: int, auction: int) -> None:
         """
@@ -228,7 +234,6 @@ class Simulation:
             for bidder in range(self.n):
                 response = self.best_response(bidder)
                 utility_change = utility_change or response
-                print()
 
             if not utility_change:
                 print("PNE found at iteration", i)
