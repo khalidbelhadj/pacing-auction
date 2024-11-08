@@ -1,11 +1,12 @@
 import collections
+import copy
 from math import ceil
 from random import random, randint
 import sys
 from typing import NamedTuple, Optional
 import json
 
-from elimination import All, Elimination
+from elimination import Elimination, Subsequent
 
 
 class Allocation(NamedTuple):
@@ -28,9 +29,9 @@ class Simulation:
     def __init__(
         self,
         n: int = 10,
-        m: int = 3,
+        m: int = 10,
         q: int = 100,
-        elimination: Elimination = All(),
+        elimination: Elimination = Subsequent(),
         file: Optional[str] = None,
         check_cycle: bool = True,
     ) -> None:
@@ -152,16 +153,20 @@ class Simulation:
         Calculate the utility of a bidder given the allocations
         utility = budget - spending
         """
-        spending = sum(price for winner, _, price in allocations if winner == bidder)
-        return self.budget[bidder] - spending
+        utility = 0
+        for winner, auction, price in allocations:
+            if winner == bidder:
+                utility += self.valuation[auction][bidder] - price
+        return utility
 
-    def best_response(self, bidder: int) -> None:
+    def best_response(self, bidder: int) -> bool:
         """
         Finds the best response for a bidder
         """
-        current_utility = self.utility(bidder, self.run_fpa())
+        current_utility = self.utility(bidder, self.step())
         max_utility = current_utility
         max_alpha = self.alpha[bidder]
+        max_elim = copy.deepcopy(self.elimination)
 
         for auction in range(self.m):
             for other_bidder in range(self.n):
@@ -173,15 +178,22 @@ class Simulation:
                 )
 
                 new_alpha = other_bid / self.valuation[auction][bidder]
-                new_alpha = min(1, ceil(new_alpha * self.q) / self.q)
-                self.alpha[bidder] = new_alpha
-                utility = self.utility(bidder, self.run_fpa())
+                new_frac = min(ceil(new_alpha * self.q), self.q)
+                self.alpha[bidder] = new_frac / self.q
+                old_elim = copy.deepcopy(self.elimination)
+
+                utility = self.utility(bidder, self.step())
+
                 if utility > max_utility:
                     max_utility = utility
                     max_alpha = self.alpha[bidder]
+                    max_elim = old_elim
 
-        if max_utility > current_utility:
-            self.alpha[bidder] = max_alpha
+                self.elimination = old_elim
+
+        self.alpha[bidder] = max_alpha
+        self.elimination = max_elim
+        return max_utility > current_utility
 
     def dump(self) -> None:
         """
@@ -212,22 +224,21 @@ class Simulation:
         seen = set([tuple(self.alpha)])
         for i in range(MAX_STEPS):
             utility_change = False
-            # Best response for each bidder sequentially
+
             for bidder in range(self.n):
-                current_utility = self.utility(bidder, self.run_fpa())
-                self.best_response(bidder)
-                new_utility = self.utility(bidder, self.run_fpa())
-                utility_change = utility_change or new_utility > current_utility
+                response = self.best_response(bidder)
+                utility_change = utility_change or response
+                print()
+
+            if not utility_change:
+                print("PNE found at iteration", i)
+                break
 
             if self.check_cycle:
                 if tuple(self.alpha) in seen:
                     print("Cycle", i)
                     break
                 seen.add(tuple(self.alpha))
-
-            if not utility_change:
-                print("PNE found at iteration", i)
-                break
 
         else:
             print(f"PNE not found after {MAX_STEPS:,} iterations", file=sys.stderr)

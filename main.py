@@ -1,9 +1,8 @@
-from elimination import Subsequent
 from simulation import Simulation
 
 
 def main() -> None:
-    sim = Simulation(elimination=Subsequent())
+    sim = Simulation()
     allocations = sim.run()
     for a in allocations:
         print(a)
