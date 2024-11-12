@@ -20,21 +20,6 @@ class Elimination(Protocol):
         ...
 
 
-class Subsequent:
-    """
-    Eliminate the bidder from the auction and all subsequent auctions
-    """
-
-    def __init__(self) -> None:
-        self.eliminated: dict[int, int] = dict()
-
-    def eliminate(self, bidder: int, auction: int) -> None:
-        self.eliminated[bidder] = auction
-
-    def is_eliminated(self, bidder: int, auction: int) -> bool:
-        return self.eliminated.get(bidder, -1) >= auction
-
-
 class All:
     """
     Eliminate the bidder from all auctions
@@ -48,6 +33,21 @@ class All:
 
     def is_eliminated(self, bidder: int, auction: int) -> bool:
         return bidder in self.eliminated
+
+
+class Subsequent:
+    """
+    Eliminate the bidder from the auction and all subsequent auctions
+    """
+
+    def __init__(self) -> None:
+        self.eliminated: dict[int, int] = dict()
+
+    def eliminate(self, bidder: int, auction: int) -> None:
+        self.eliminated[bidder] = auction
+
+    def is_eliminated(self, bidder: int, auction: int) -> bool:
+        return self.eliminated.get(bidder, -1) >= auction
 
 
 class Current:
