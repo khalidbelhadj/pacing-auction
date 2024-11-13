@@ -16,8 +16,9 @@
 - [x] Find PNE
 - [x] Find Cycles
 - [x] Import/export state
-- [ ] Complex elimination strategies
+- [ ] Use ints to represent state
 - [ ] Tie strategies
 - [ ] Test cases
 - [ ] Measure performance (memory + time)
 - [ ] Multithreaded simulation
+- [ ] Complex elimination strategies

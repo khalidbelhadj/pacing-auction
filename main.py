@@ -4,7 +4,7 @@ import pstats
 
 
 def main() -> None:
-    sim = Simulation(n=10, m=20, q=100)
+    sim = Simulation(n=10, m=10, q=100)
     allocations = sim.run()
     for a in allocations:
         print(a)
@@ -16,4 +16,5 @@ if __name__ == "__main__":
     stats = pstats.Stats(pr)
     stats.sort_stats(pstats.SortKey.TIME)
     stats.print_stats()
-    # stats.dump_stats("main.prof")
+
+    # main()

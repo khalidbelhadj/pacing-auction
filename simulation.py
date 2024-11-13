@@ -8,6 +8,8 @@ import json
 
 from elimination import Elimination, Subsequent
 
+MAX_STEPS = 1 << 10
+
 
 class Allocation(NamedTuple):
     """
@@ -20,9 +22,6 @@ class Allocation(NamedTuple):
 
     def __repr__(self) -> str:
         return f"Allocation(bidder={self.bidder}, auction={self.auction}, price={self.price})"
-
-
-MAX_STEPS = 10 * 10**2
 
 
 class Simulation:
@@ -45,8 +44,8 @@ class Simulation:
         :param file: Load state from file
         :param check_cycle: Check for cycles in the simulation
         """
-        self.elimination = elimination
-        self.check_cycle = check_cycle
+        self.elimination: Elimination = elimination
+        self.check_cycle: bool = check_cycle
 
         if file:
             self.load(file)
@@ -57,13 +56,15 @@ class Simulation:
         self.q: int = q
 
         # budget[bidder]
-        self.budget = [random() for _ in range(n)]
+        self.budget: list[float] = [random() for _ in range(n)]
 
         # valuation[auction][bidder]
-        self.valuation = [[random() for _ in range(n)] for _ in range(m)]
+        self.valuation: list[list[float]] = [
+            [random() for _ in range(n)] for _ in range(m)
+        ]
 
         # alpha[bidder]
-        self.alpha = [randint(0, q) / q for _ in range(n)]
+        self.alpha: list[float] = [randint(0, q) / q for _ in range(n)]
 
     def load(self, file: str) -> None:
         with open(file) as f:
@@ -186,7 +187,7 @@ class Simulation:
         current_utility = self.utility(bidder, self.step())
         max_utility = current_utility
         max_alpha = self.alpha[bidder]
-        max_elim = copy.deepcopy(self.elimination)
+        old_elim = copy.deepcopy(self.elimination)
 
         for auction in range(self.m):
             for other_bidder in range(self.n):
@@ -199,21 +200,16 @@ class Simulation:
 
                 new_alpha = other_bid / self.valuation[auction][bidder]
                 self.alpha[bidder] = min(ceil(new_alpha * self.q) / self.q, 1)
-                old_elim = copy.deepcopy(self.elimination)
 
+                self.elimination = copy.deepcopy(old_elim)
                 utility = self.utility(bidder, self.step())
-
-                #
 
                 if utility > max_utility:
                     max_utility = utility
                     max_alpha = self.alpha[bidder]
-                    max_elim = old_elim
 
-                self.elimination = old_elim
-
+        self.elimination = old_elim
         self.alpha[bidder] = max_alpha
-        self.elimination = max_elim
         return max_utility > current_utility
 
     def save(self, file_name: str) -> None:
@@ -250,12 +246,12 @@ class Simulation:
                 utility_change = self.best_response(bidder) or utility_change
 
             if not utility_change:
-                print("PNE found at iteration", i)
+                print(f"PNE found after {i} iterations")
                 break
 
             if self.check_cycle:
                 if tuple(self.alpha) in seen:
-                    print("Cycle", i)
+                    print(f"Cycle found after {i} iterations")
                     break
                 seen.add(tuple(self.alpha))
 
