@@ -1,13 +1,22 @@
-from simulation import Simulation
+from simulation import PNE, Cycle, Simulation
 import cProfile
 import pstats
 
 
 def main() -> None:
-    sim = Simulation(n=10, m=10, q=100)
-    allocations = sim.run()
-    for a in allocations:
-        print(a)
+    sim = Simulation(10, 10, 1000)
+    sim.load("data.json")
+
+    match sim.run():
+        case Cycle(iteration):
+            print("Cycle:", iteration)
+            return
+
+        case PNE(allocations, iteration):
+            print("Allocations:")
+            allocations.sort(key=lambda a: a.auction)
+            for a in allocations:
+                print("    - ", a)
 
 
 if __name__ == "__main__":
@@ -15,6 +24,4 @@ if __name__ == "__main__":
         main()
     stats = pstats.Stats(pr)
     stats.sort_stats(pstats.SortKey.TIME)
-    stats.print_stats()
-
-    # main()
+    # stats.print_stats()

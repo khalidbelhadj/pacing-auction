@@ -19,6 +19,12 @@ class Elimination(Protocol):
         """
         ...
 
+    def clear(self) -> None:
+        """
+        Clear all eliminations
+        """
+        ...
+
 
 class All:
     """
@@ -33,6 +39,9 @@ class All:
 
     def is_eliminated(self, bidder: int, auction: int) -> bool:
         return bidder in self.eliminated
+
+    def clear(self) -> None:
+        self.eliminated.clear()
 
 
 class Subsequent:
@@ -49,6 +58,9 @@ class Subsequent:
     def is_eliminated(self, bidder: int, auction: int) -> bool:
         return self.eliminated.get(bidder, -1) >= auction
 
+    def clear(self) -> None:
+        self.eliminated.clear()
+
 
 class Current:
     """
@@ -63,3 +75,6 @@ class Current:
 
     def is_eliminated(self, bidder: int, auction: int) -> bool:
         return auction in self.eliminated[bidder]
+
+    def clear(self) -> None:
+        self.eliminated.clear()

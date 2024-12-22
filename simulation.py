@@ -1,38 +1,39 @@
 import collections
-import copy
 from math import ceil
-from random import random, randint
-import sys
-from typing import NamedTuple, Optional
+from random import random, randint, shuffle
+from typing import NamedTuple
 import json
 
+from allocation import Allocation
 from elimination import Elimination, Subsequent
 
-MAX_STEPS = 1 << 10
+
+class Cycle(NamedTuple):
+    iteration: int
 
 
-class Allocation(NamedTuple):
-    """
-    An allocation of the auction, signifying the winner
-    """
+class PNE(NamedTuple):
+    allocations: list[Allocation]
+    iteration: int
 
+
+class Violation(NamedTuple):
     bidder: int
     auction: int
-    price: float
 
-    def __repr__(self) -> str:
-        return f"Allocation(bidder={self.bidder}, auction={self.auction}, price={self.price})"
+
+class FPAAllocation(NamedTuple):
+    allocations: list[Allocation]
 
 
 class Simulation:
     def __init__(
         self,
-        n: int = 10,
-        m: int = 10,
-        q: int = 100,
+        n: int,
+        m: int,
+        q: int,
         elimination: Elimination = Subsequent(),
-        file: Optional[str] = None,
-        check_cycle: bool = True,
+        no_budget: bool = False,
     ) -> None:
         """
         Initialize the simulation with given parameters.
@@ -41,15 +42,9 @@ class Simulation:
         :param m: Number of auctions
         :param q: Quality factor
         :param elimination: Elimination strategy (default Subsequent)
-        :param file: Load state from file
-        :param check_cycle: Check for cycles in the simulation
+        :param no_budget: Whether to remove all budgets
         """
         self.elimination: Elimination = elimination
-        self.check_cycle: bool = check_cycle
-
-        if file:
-            self.load(file)
-            return
 
         self.n: int = n
         self.m: int = m
@@ -57,6 +52,8 @@ class Simulation:
 
         # budget[bidder]
         self.budget: list[float] = [random() for _ in range(n)]
+        if no_budget:
+            self.budget = [float("infinity")] * n
 
         # valuation[auction][bidder]
         self.valuation: list[list[float]] = [
@@ -86,39 +83,41 @@ class Simulation:
             except KeyError:
                 raise ValueError("Invalid state file")
 
-    def eliminate(self, bidder: int, auction: int) -> None:
+    def save(self, file_name: str) -> None:
         """
-        Eliminate the bidder from the auction.
+        Dump the current state to a JSON file.
 
-        :param bidder: The bidder to eliminate
-        :param auction: The auction from which the bidder is eliminated
+        :param file_name: The name of the file to save the state to
         """
-        self.elimination.eliminate(bidder, auction)
+        with open(file_name, "w") as f:
+            json.dump(
+                {
+                    "n": self.n,
+                    "m": self.m,
+                    "q": self.q,
+                    "budget": self.budget,
+                    "valuation": self.valuation,
+                    "alpha": self.alpha,
+                },
+                f,
+                indent=4,
+            )
 
-    def is_eliminated(self, bidder: int, auction: int) -> bool:
-        """
-        Check if the bidder is eliminated.
-
-        :param bidder: The bidder to check
-        :param auction: The auction to check
-        :return: True if the bidder is eliminated, False otherwise
-        """
-        return self.elimination.is_eliminated(bidder, auction)
-
-    def run_fpa(self) -> list[Allocation]:
+    def fpa(self) -> FPAAllocation | Violation:
         """
         Run the first price auction.
 
         :return: List of allocations
         """
         allocations: list[Allocation] = []
+        spending: dict[int, float] = collections.defaultdict(float)
 
         for auction in range(self.m):
             winner = None
             winning_bid = -1
 
             for bidder in range(self.n):
-                if self.is_eliminated(bidder, auction):
+                if self.elimination.is_eliminated(bidder, auction):
                     continue
 
                 alpha = self.alpha[bidder]
@@ -129,39 +128,25 @@ class Simulation:
 
             if winner is not None:
                 allocations.append(Allocation(winner, auction, winning_bid))
+                spending[winner] += winning_bid
+                if spending[winner] > self.budget[winner]:
+                    return Violation(winner, auction)
 
-        return allocations
+        return FPAAllocation(allocations)
 
-    def check_violations(
-        self, allocations: list[Allocation]
-    ) -> Optional[tuple[int, int]]:
-        """
-        Check if there are any violations, and return the first violation found.
-
-        :param allocations: List of allocations
-        :return: The first violation found, or None if no violations
-        """
-        spending: dict[int, float] = collections.defaultdict(float)
-
-        for bidder, auction, price in allocations:
-            spending[bidder] += price
-            if spending[bidder] > self.budget[bidder]:
-                return (bidder, auction)
-
-        return None
-
-    def step(self) -> list[Allocation]:
+    def auction(self) -> list[Allocation]:
         """
         Run a step of the simulation.
 
         :return: List of allocations
         """
-        allocations = self.run_fpa()
-        violation = self.check_violations(allocations)
-        if violation is not None:
-            self.eliminate(*violation)
-            return self.step()
-        return allocations
+        self.elimination.clear()
+        while True:
+            match self.fpa():
+                case FPAAllocation(allocations):
+                    return allocations
+                case Violation(bidder, auction):
+                    self.elimination.eliminate(bidder, auction)
 
     def utility(self, bidder: int, allocations: list[Allocation]) -> float:
         """
@@ -184,10 +169,9 @@ class Simulation:
         :param bidder: The bidder whose best response is being calculated
         :return: True if the utility of the bidder has changed, False otherwise
         """
-        current_utility = self.utility(bidder, self.step())
+        current_utility = self.utility(bidder, self.auction())
         max_utility = current_utility
         max_alpha = self.alpha[bidder]
-        old_elim = copy.deepcopy(self.elimination)
 
         for auction in range(self.m):
             for other_bidder in range(self.n):
@@ -201,60 +185,41 @@ class Simulation:
                 new_alpha = other_bid / self.valuation[auction][bidder]
                 self.alpha[bidder] = min(ceil(new_alpha * self.q) / self.q, 1)
 
-                self.elimination = copy.deepcopy(old_elim)
-                utility = self.utility(bidder, self.step())
+                utility = self.utility(bidder, self.auction())
 
                 if utility > max_utility:
                     max_utility = utility
                     max_alpha = self.alpha[bidder]
 
-        self.elimination = old_elim
         self.alpha[bidder] = max_alpha
         return max_utility > current_utility
 
-    def save(self, file_name: str) -> None:
-        """
-        Dump the current state to a JSON file.
-
-        :param file_name: The name of the file to save the state to
-        """
-        with open(file_name, "w") as f:
-            json.dump(
-                {
-                    "n": self.n,
-                    "m": self.m,
-                    "q": self.q,
-                    "budget": self.budget,
-                    "valuation": self.valuation,
-                    "alpha": self.alpha,
-                },
-                f,
-                indent=4,
-            )
-
-    def run(self) -> list[Allocation]:
+    def run(self) -> Cycle | PNE:
         """
         Run the simulation.
 
         :return: List of allocations
         """
         seen = set([tuple(self.alpha)])
-        for i in range(MAX_STEPS):
+        order = list(range(self.n))
+
+        i = 0
+        while True:
+            shuffle(order)
+            print(i, order)
             utility_change = False
 
-            for bidder in range(self.n):
+            for bidder in order:
                 utility_change = self.best_response(bidder) or utility_change
 
+            # PNE found
             if not utility_change:
-                print(f"PNE found after {i} iterations")
-                break
+                return PNE(self.auction(), i)
 
-            if self.check_cycle:
-                if tuple(self.alpha) in seen:
-                    print(f"Cycle found after {i} iterations")
-                    break
-                seen.add(tuple(self.alpha))
+            # Cycle detection
+            t = tuple(self.alpha)
+            if t in seen:
+                return Cycle(i)
+            seen.add(t)
 
-        else:
-            print(f"PNE not found after {MAX_STEPS:,} iterations", file=sys.stderr)
-        return self.step()
+            i += 1
