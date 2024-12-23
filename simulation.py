@@ -1,18 +1,30 @@
 import collections
+from dataclasses import dataclass
 from math import ceil
-from random import random, randint, shuffle  # type: ignore
-from typing import NamedTuple
+from time import perf_counter
+from typing import NamedTuple, Optional
 import json
+
+import numpy as np
+from numpy.random import shuffle, random, randint  # type: ignore
+from numpy.typing import NDArray
 
 from allocation import Allocation
 from elimination import Elimination, Subsequent
 
 
-class Cycle(NamedTuple):
+@dataclass
+class SimulationResult:
+    time: float
+
+
+@dataclass
+class Cycle(SimulationResult):
     iteration: int
 
 
-class PNE(NamedTuple):
+@dataclass
+class PNE(SimulationResult):
     allocations: list[Allocation]
     iteration: int
 
@@ -32,59 +44,52 @@ class Simulation:
         n: int,
         m: int,
         q: int,
-        elimination: Elimination = Subsequent(),
+        elimination: Optional[Elimination] = None,
         no_budget: bool = False,
     ) -> None:
-        """
-        Initialize the simulation with given parameters.
-
-        :param n: Number of bidders
-        :param m: Number of auctions
-        :param q: Quality factor
-        :param elimination: Elimination strategy (default Subsequent)
-        :param no_budget: Whether to remove all budgets
-        """
-        self.elimination: Elimination = elimination
+        self.elimination: Elimination = elimination or Subsequent(n, m)
 
         self.n: int = n
         self.m: int = m
         self.q: int = q
 
         # budget[bidder]
-        self.b: list[float] = [random() for _ in range(n)]
+        self.b: NDArray[np.float64] = np.array([random() for _ in range(n)])
         if no_budget:
-            self.b = [float("infinity")] * n
+            self.b = np.full(n, np.inf)
 
         # valuation[bidder][auction]
-        self.v: list[list[float]] = [[random() for _ in range(m)] for _ in range(n)]
+        self.v: NDArray[np.float64] = random((n, m))
 
         # alpha[bidder]
-        self.alpha: list[float] = [randint(0, q) / q for _ in range(n)]
+        self.alpha: NDArray[np.float64] = np.array(
+            [randint(0, q) / q for _ in range(n)]
+        )
+
+    def reset(self) -> None:
+        self.elimination.clear()
+        self.__init__(self.n, self.m, self.q, self.elimination)
 
     def load(self, file: str) -> None:
-        with open(file) as f:
-            state = json.load(f)
-            try:
-                self.n = state["n"]
-                self.m = state["m"]
-                self.q = state["q"]
-                self.b = state["budget"]
-                assert len(self.b) == self.n, "Invalid budget, must have n elements"
-                self.v = state["valuation"]
-                assert len(self.v) == self.m and (
-                    self.m == 0 or len(self.v[0]) == self.n
-                ), "Invalid valuation, must have m x n elements"
-                self.alpha = state["alpha"]
-                assert len(self.alpha) == self.n, "Invalid alpha, must have n elements"
-            except KeyError:
-                raise ValueError("Invalid state file")
+        raise NotImplementedError
+        # with open(file) as f:
+        #     state = json.load(f)
+        #     try:
+        #         self.n = state["n"]
+        #         self.m = state["m"]
+        #         self.q = state["q"]
+        #         self.b = np.array(state["budget"])
+        #         # assert self.b.size == self.n, "Invalid budget, must have n elements"
+        #         self.v = np.array([np.array(vi) for vi in state["valuation"]])
+        #         # assert (
+        #         #     self.v.size == self.n
+        #         # ), "Invalid valuation, must have n x m elements"
+        #         self.alpha = np.array(state["alpha"])
+        #         # assert len(self.alpha) == self.n, "Invalid alpha, must have n elements"
+        #     except KeyError:
+        #         raise ValueError("Invalid state file")
 
     def save(self, file_name: str) -> None:
-        """
-        Dump the current state to a JSON file.
-
-        :param file_name: The name of the file to save the state to
-        """
         with open(file_name, "w") as f:
             json.dump(
                 {
@@ -100,26 +105,20 @@ class Simulation:
             )
 
     def fpa(self) -> FPAAllocation | Violation:
-        """
-        Run the first price auction.
-
-        :return: List of allocations
-        """
         allocations: list[Allocation] = []
         spending: dict[int, float] = collections.defaultdict(float)
-        # spending = [0.0] * self.n
+        bids = self.v * self.alpha[:, np.newaxis]
 
         for auction in range(self.m):
             winner = None
             winning_bid = -1
 
             for bidder in range(self.n):
-                if self.elimination.is_eliminated(bidder, auction):
-                    continue
+                bid = bids[bidder][auction]
 
-                alpha = self.alpha[bidder]
-                bid = self.v[bidder][auction] * alpha
-                if winner is None or bid > winning_bid:
+                if bid > winning_bid and not self.elimination.is_eliminated(
+                    bidder, auction
+                ):
                     winner = bidder
                     winning_bid = bid
 
@@ -132,11 +131,6 @@ class Simulation:
         return FPAAllocation(allocations)
 
     def auction(self) -> list[Allocation]:
-        """
-        Run a step of the simulation.
-
-        :return: List of allocations
-        """
         self.elimination.clear()
         while True:
             match self.fpa():
@@ -146,13 +140,6 @@ class Simulation:
                     self.elimination.eliminate(bidder, auction)
 
     def utility(self, bidder: int, allocations: list[Allocation]) -> float:
-        """
-        Calculate the utility of a bidder given the allocations.
-
-        :param bidder: The bidder whose utility is being calculated
-        :param allocations: List of allocations
-        :return: The utility of the bidder
-        """
         utility = 0
         for winner, auction, price in allocations:
             if winner == bidder:
@@ -160,12 +147,6 @@ class Simulation:
         return utility
 
     def best_response(self, bidder: int) -> bool:
-        """
-        Finds the best response for a bidder.
-
-        :param bidder: The bidder whose best response is being calculated
-        :return: True if the utility of the bidder has changed, False otherwise
-        """
         current_utility = self.utility(bidder, self.auction())
         max_utility = current_utility
         max_alpha = self.alpha[bidder]
@@ -182,41 +163,40 @@ class Simulation:
                 utility = self.utility(bidder, self.auction())
 
                 if utility > max_utility:
+                    # return True
                     max_utility = utility
                     max_alpha = self.alpha[bidder]
 
+        # return False
         self.alpha[bidder] = max_alpha
         return max_utility > current_utility
 
     def welfare(self, allocations: list[Allocation]) -> float:
         return sum(self.utility(bidder, allocations) for bidder in range(self.n))
 
-    def run(self) -> Cycle | PNE:
-        """
-        Run the simulation.
-
-        :return: List of allocations
-        """
+    def run(self) -> SimulationResult:
         seen = set([tuple(self.alpha)])
-        order = list(range(self.n))
+        order = np.arange(self.n)
+
+        start_time = perf_counter()
 
         i = 0
         while True:
             # shuffle(order)
+            # print(i)
             utility_change = False
-            print(i, order)
 
             for bidder in order:
                 utility_change = self.best_response(bidder) or utility_change
 
             # PNE found
             if not utility_change:
-                return PNE(self.auction(), i)
+                return PNE(perf_counter() - start_time, self.auction(), i)
 
             # Cycle detection
             t = tuple(self.alpha)
             if t in seen:
-                return Cycle(i)
+                return Cycle(perf_counter() - start_time, i)
             seen.add(t)
 
             i += 1

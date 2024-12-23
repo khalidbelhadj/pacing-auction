@@ -1,4 +1,3 @@
-import collections
 from typing import Protocol
 
 
@@ -6,6 +5,12 @@ class Elimination(Protocol):
     """
     An interface for elimination procedures
     """
+
+    def __init__(self, n: int, m: int) -> None:
+        """
+        Initialize
+        """
+        ...
 
     def eliminate(self, bidder: int, auction: int) -> None:
         """
@@ -31,7 +36,7 @@ class All:
     Eliminate the bidder from all auctions
     """
 
-    def __init__(self) -> None:
+    def __init__(self, n: int, m: int) -> None:
         self.eliminated: set[int] = set()
 
     def eliminate(self, bidder: int, auction: int) -> None:
@@ -49,17 +54,17 @@ class Subsequent:
     Eliminate the bidder from the auction and all subsequent auctions
     """
 
-    def __init__(self) -> None:
-        self.eliminated: dict[int, int] = dict()
+    def __init__(self, n: int, m: int) -> None:
+        self.eliminated: list[int] = [-1] * n
 
     def eliminate(self, bidder: int, auction: int) -> None:
         self.eliminated[bidder] = auction
 
     def is_eliminated(self, bidder: int, auction: int) -> bool:
-        return self.eliminated.get(bidder, -1) >= auction
+        return self.eliminated[bidder] >= auction
 
     def clear(self) -> None:
-        self.eliminated.clear()
+        self.eliminated = [-1] * len(self.eliminated)
 
 
 class Current:
@@ -67,14 +72,14 @@ class Current:
     Eliminate the bidder from a specific auction
     """
 
-    def __init__(self) -> None:
-        self.eliminated: dict[int, set[int]] = collections.defaultdict(set)
+    def __init__(self, n: int, m: int) -> None:
+        self.eliminated: list[list[bool]] = [[False] * m for _ in range(n)]
 
     def eliminate(self, bidder: int, auction: int) -> None:
-        self.eliminated[bidder].add(auction)
+        self.eliminated[bidder][auction] = True
 
     def is_eliminated(self, bidder: int, auction: int) -> bool:
-        return auction in self.eliminated[bidder]
+        return self.eliminated[bidder][auction]
 
     def clear(self) -> None:
         self.eliminated.clear()
