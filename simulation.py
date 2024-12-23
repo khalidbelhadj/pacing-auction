@@ -1,6 +1,6 @@
 import collections
 from math import ceil
-from random import random, randint, shuffle
+from random import random, randint, shuffle  # type: ignore
 from typing import NamedTuple
 import json
 
@@ -51,14 +51,12 @@ class Simulation:
         self.q: int = q
 
         # budget[bidder]
-        self.budget: list[float] = [random() for _ in range(n)]
+        self.b: list[float] = [random() for _ in range(n)]
         if no_budget:
-            self.budget = [float("infinity")] * n
+            self.b = [float("infinity")] * n
 
-        # valuation[auction][bidder]
-        self.valuation: list[list[float]] = [
-            [random() for _ in range(n)] for _ in range(m)
-        ]
+        # valuation[bidder][auction]
+        self.v: list[list[float]] = [[random() for _ in range(m)] for _ in range(n)]
 
         # alpha[bidder]
         self.alpha: list[float] = [randint(0, q) / q for _ in range(n)]
@@ -70,13 +68,11 @@ class Simulation:
                 self.n = state["n"]
                 self.m = state["m"]
                 self.q = state["q"]
-                self.budget = state["budget"]
-                assert (
-                    len(self.budget) == self.n
-                ), "Invalid budget, must have n elements"
-                self.valuation = state["valuation"]
-                assert len(self.valuation) == self.m and (
-                    self.m == 0 or len(self.valuation[0]) == self.n
+                self.b = state["budget"]
+                assert len(self.b) == self.n, "Invalid budget, must have n elements"
+                self.v = state["valuation"]
+                assert len(self.v) == self.m and (
+                    self.m == 0 or len(self.v[0]) == self.n
                 ), "Invalid valuation, must have m x n elements"
                 self.alpha = state["alpha"]
                 assert len(self.alpha) == self.n, "Invalid alpha, must have n elements"
@@ -95,8 +91,8 @@ class Simulation:
                     "n": self.n,
                     "m": self.m,
                     "q": self.q,
-                    "budget": self.budget,
-                    "valuation": self.valuation,
+                    "budget": self.b,
+                    "valuation": self.v,
                     "alpha": self.alpha,
                 },
                 f,
@@ -111,6 +107,7 @@ class Simulation:
         """
         allocations: list[Allocation] = []
         spending: dict[int, float] = collections.defaultdict(float)
+        # spending = [0.0] * self.n
 
         for auction in range(self.m):
             winner = None
@@ -121,7 +118,7 @@ class Simulation:
                     continue
 
                 alpha = self.alpha[bidder]
-                bid = self.valuation[auction][bidder] * alpha
+                bid = self.v[bidder][auction] * alpha
                 if winner is None or bid > winning_bid:
                     winner = bidder
                     winning_bid = bid
@@ -129,7 +126,7 @@ class Simulation:
             if winner is not None:
                 allocations.append(Allocation(winner, auction, winning_bid))
                 spending[winner] += winning_bid
-                if spending[winner] > self.budget[winner]:
+                if spending[winner] > self.b[winner]:
                     return Violation(winner, auction)
 
         return FPAAllocation(allocations)
@@ -159,7 +156,7 @@ class Simulation:
         utility = 0
         for winner, auction, price in allocations:
             if winner == bidder:
-                utility += self.valuation[auction][bidder] - price
+                utility += self.v[bidder][auction] - price
         return utility
 
     def best_response(self, bidder: int) -> bool:
@@ -175,16 +172,13 @@ class Simulation:
 
         for auction in range(self.m):
             for other_bidder in range(self.n):
-                if other_bidder == bidder:
+                if other_bidder == bidder or self.v[bidder][auction] == 0:
                     continue
 
-                other_bid = (
-                    self.alpha[other_bidder] * self.valuation[auction][other_bidder]
-                )
-
-                new_alpha = other_bid / self.valuation[auction][bidder]
+                # Calculate utility, if bidder matches the other bidder's bid
+                other_bid = self.alpha[other_bidder] * self.v[other_bidder][auction]
+                new_alpha = other_bid / self.v[bidder][auction]
                 self.alpha[bidder] = min(ceil(new_alpha * self.q) / self.q, 1)
-
                 utility = self.utility(bidder, self.auction())
 
                 if utility > max_utility:
@@ -193,6 +187,9 @@ class Simulation:
 
         self.alpha[bidder] = max_alpha
         return max_utility > current_utility
+
+    def welfare(self, allocations: list[Allocation]) -> float:
+        return sum(self.utility(bidder, allocations) for bidder in range(self.n))
 
     def run(self) -> Cycle | PNE:
         """
@@ -205,9 +202,9 @@ class Simulation:
 
         i = 0
         while True:
-            shuffle(order)
-            print(i, order)
+            # shuffle(order)
             utility_change = False
+            print(i, order)
 
             for bidder in order:
                 utility_change = self.best_response(bidder) or utility_change
