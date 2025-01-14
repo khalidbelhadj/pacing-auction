@@ -1,9 +1,2 @@
-.DS_Store
-__pycache__
-*.json
-cpp
-*.prof
-
-# Added by cargo
-
-/target
+# Created by venv; see https://docs.python.org/3/library/venv.html
+*

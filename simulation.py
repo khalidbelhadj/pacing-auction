@@ -1,20 +1,38 @@
-import collections
+from dataclasses import dataclass
 from math import ceil
-from random import random, randint, shuffle  # type: ignore
-from typing import NamedTuple
+from time import perf_counter
+from typing import NamedTuple, Optional
 import json
 
+
+import numpy as np
+from numpy.random import shuffle, random, randint  # type: ignore
+from numpy.typing import NDArray
+
 from allocation import Allocation
-from elimination import Elimination, Subsequent
+import elimination
+
+from concurrent.futures import Future, ThreadPoolExecutor
+
+import logging
+
+logger = logging.getLogger("simulation")
 
 
-class Cycle(NamedTuple):
+@dataclass
+class SimulationResult:
+    time: float
     iteration: int
 
 
-class PNE(NamedTuple):
+@dataclass
+class Cycle(SimulationResult):
+    pass
+
+
+@dataclass
+class PNE(SimulationResult):
     allocations: list[Allocation]
-    iteration: int
 
 
 class Violation(NamedTuple):
@@ -32,34 +50,25 @@ class Simulation:
         n: int,
         m: int,
         q: int,
-        elimination: Elimination = Subsequent(),
         no_budget: bool = False,
     ) -> None:
-        """
-        Initialize the simulation with given parameters.
-
-        :param n: Number of bidders
-        :param m: Number of auctions
-        :param q: Quality factor
-        :param elimination: Elimination strategy (default Subsequent)
-        :param no_budget: Whether to remove all budgets
-        """
-        self.elimination: Elimination = elimination
 
         self.n: int = n
         self.m: int = m
         self.q: int = q
 
         # budget[bidder]
-        self.b: list[float] = [random() for _ in range(n)]
+        self.b: NDArray[np.float64] = np.array([random() for _ in range(n)])
         if no_budget:
-            self.b = [float("infinity")] * n
+            self.b = np.full(n, np.inf)
 
         # valuation[bidder][auction]
-        self.v: list[list[float]] = [[random() for _ in range(m)] for _ in range(n)]
+        self.v: NDArray[np.float64] = random((n, m))
 
         # alpha[bidder]
-        self.alpha: list[float] = [randint(0, q) / q for _ in range(n)]
+        self.alpha: NDArray[np.float64] = np.array(
+            [randint(0, q) / q for _ in range(n)]
+        )
 
     def load(self, file: str) -> None:
         with open(file) as f:
@@ -68,155 +77,151 @@ class Simulation:
                 self.n = state["n"]
                 self.m = state["m"]
                 self.q = state["q"]
-                self.b = state["budget"]
-                assert len(self.b) == self.n, "Invalid budget, must have n elements"
-                self.v = state["valuation"]
-                assert len(self.v) == self.m and (
-                    self.m == 0 or len(self.v[0]) == self.n
-                ), "Invalid valuation, must have m x n elements"
-                self.alpha = state["alpha"]
-                assert len(self.alpha) == self.n, "Invalid alpha, must have n elements"
+                self.b = np.array(state["budget"])
+                self.v = np.array([np.array(vi) for vi in state["valuation"]])
+                self.alpha = np.array(state["alpha"])
             except KeyError:
                 raise ValueError("Invalid state file")
 
     def save(self, file_name: str) -> None:
-        """
-        Dump the current state to a JSON file.
-
-        :param file_name: The name of the file to save the state to
-        """
         with open(file_name, "w") as f:
             json.dump(
                 {
                     "n": self.n,
                     "m": self.m,
                     "q": self.q,
-                    "budget": self.b,
-                    "valuation": self.v,
-                    "alpha": self.alpha,
+                    "budget": list(self.b),
+                    "valuation": [list(v) for v in self.v],
+                    "alpha": list(self.alpha),
                 },
                 f,
                 indent=4,
             )
 
-    def fpa(self) -> FPAAllocation | Violation:
-        """
-        Run the first price auction.
-
-        :return: List of allocations
-        """
-        allocations: list[Allocation] = []
-        spending: dict[int, float] = collections.defaultdict(float)
-        # spending = [0.0] * self.n
-
-        for auction in range(self.m):
-            winner = None
-            winning_bid = -1
-
-            for bidder in range(self.n):
-                if self.elimination.is_eliminated(bidder, auction):
-                    continue
-
-                alpha = self.alpha[bidder]
-                bid = self.v[bidder][auction] * alpha
-                if winner is None or bid > winning_bid:
-                    winner = bidder
-                    winning_bid = bid
-
-            if winner is not None:
-                allocations.append(Allocation(winner, auction, winning_bid))
-                spending[winner] += winning_bid
-                if spending[winner] > self.b[winner]:
-                    return Violation(winner, auction)
-
-        return FPAAllocation(allocations)
-
-    def auction(self) -> list[Allocation]:
-        """
-        Run a step of the simulation.
-
-        :return: List of allocations
-        """
-        self.elimination.clear()
-        while True:
-            match self.fpa():
-                case FPAAllocation(allocations):
-                    return allocations
-                case Violation(bidder, auction):
-                    self.elimination.eliminate(bidder, auction)
-
     def utility(self, bidder: int, allocations: list[Allocation]) -> float:
-        """
-        Calculate the utility of a bidder given the allocations.
-
-        :param bidder: The bidder whose utility is being calculated
-        :param allocations: List of allocations
-        :return: The utility of the bidder
-        """
         utility = 0
         for winner, auction, price in allocations:
             if winner == bidder:
                 utility += self.v[bidder][auction] - price
         return utility
 
-    def best_response(self, bidder: int) -> bool:
-        """
-        Finds the best response for a bidder.
+    def fpa(
+        self, mask: NDArray[np.bool_], adjust: Optional[tuple[int, float]] = None
+    ) -> FPAAllocation | Violation:
+        bids = self.v * self.alpha[:, np.newaxis]
+        if adjust:
+            bidder, adjustment = adjust
+            bids[bidder] = self.v[bidder] * adjustment
+        valid_bids = np.where(mask, bids, 0)
 
-        :param bidder: The bidder whose best response is being calculated
-        :return: True if the utility of the bidder has changed, False otherwise
-        """
-        current_utility = self.utility(bidder, self.auction())
-        max_utility = current_utility
-        max_alpha = self.alpha[bidder]
+        winners: NDArray[np.int_] = np.argmax(valid_bids, axis=0)
+        spending = np.zeros(self.n)
+        allocations: list[Allocation] = []
+
+        for auction, winner in enumerate(winners):
+            bid = valid_bids[winner][auction]
+            if spending[winner] + bid > self.b[winner]:
+                return Violation(winner, auction)
+
+            spending[winner] += bid
+            allocations.append(Allocation(winner, auction, bid))
+
+        assert len(allocations) == self.m
+
+        return FPAAllocation(allocations)
+
+    def auction(self, adjust: Optional[tuple[int, float]] = None) -> list[Allocation]:
+        # mask[bidder][auction], True if not eliminated
+        mask = np.ones((self.n, self.m), dtype=bool)
+
+        while True:
+            match self.fpa(mask, adjust):
+                case FPAAllocation(allocations):
+                    return allocations
+                case Violation(bidder, auction):
+                    elimination.subsequent(bidder, auction, mask)
+
+    def best_response_threaded(self, bidder: int) -> bool:
+        util = self.utility(bidder, self.auction())
+
+        def compute(auction: int, other_bidder: int) -> tuple[float, float]:
+            # Calculate utility, if bidder matches the other bidder's bid
+            other_bid = self.alpha[other_bidder] * self.v[other_bidder][auction]
+            new_alpha = other_bid / self.v[bidder][auction]
+            new_alpha = min(ceil(new_alpha * self.q) / self.q, 1)
+            new_util = self.utility(bidder, self.auction((bidder, new_alpha)))
+            return (new_util, new_alpha)
+
+        futures: list[Future[tuple[float, float]]] = []
+        with ThreadPoolExecutor() as executor:
+            for auction in range(self.m):
+                for other_bidder in range(self.n):
+                    if other_bidder == bidder or self.v[bidder][auction] == 0:
+                        continue
+
+                    f = executor.submit(compute, auction, other_bidder)
+                    futures.append(f)
+
+        result = [f.result() for f in futures]
+        result.append((util, self.alpha[bidder]))
+        max_util, max_alpha = max(result)
+        self.alpha[bidder] = max_alpha
+        return max_util > util
+
+    def best_response(self, bidder: int) -> bool:
+        curr_alpha = self.alpha[bidder]
+        curr_util = self.utility(bidder, self.auction())
+
+        max_alpha = curr_alpha
+        max_util = curr_util
 
         for auction in range(self.m):
             for other_bidder in range(self.n):
                 if other_bidder == bidder or self.v[bidder][auction] == 0:
                     continue
 
-                # Calculate utility, if bidder matches the other bidder's bid
                 other_bid = self.alpha[other_bidder] * self.v[other_bidder][auction]
                 new_alpha = other_bid / self.v[bidder][auction]
-                self.alpha[bidder] = min(ceil(new_alpha * self.q) / self.q, 1)
-                utility = self.utility(bidder, self.auction())
+                new_alpha = min(ceil(new_alpha * self.q) / self.q, 1)
+                new_util = self.utility(bidder, self.auction((bidder, new_alpha)))
 
-                if utility > max_utility:
-                    max_utility = utility
-                    max_alpha = self.alpha[bidder]
+                if new_util > max_util:
+                    max_util = new_util
+                    max_alpha = new_alpha
 
         self.alpha[bidder] = max_alpha
-        return max_utility > current_utility
+        return max_util > curr_util
 
     def welfare(self, allocations: list[Allocation]) -> float:
         return sum(self.utility(bidder, allocations) for bidder in range(self.n))
 
-    def run(self) -> Cycle | PNE:
-        """
-        Run the simulation.
-
-        :return: List of allocations
-        """
+    def run(self) -> SimulationResult:
         seen = set([tuple(self.alpha)])
-        order = list(range(self.n))
+        order = np.arange(self.n)
+
+        start_time = perf_counter()
 
         i = 0
         while True:
             # shuffle(order)
             utility_change = False
-            print(i, order)
 
             for bidder in order:
-                utility_change = self.best_response(bidder) or utility_change
+                # TODO: alpha should be set here, and not mutated anywhere else
+                utility_change = (
+                    # self.best_response_threaded(int(bidder)) or utility_change
+                    self.best_response(int(bidder))
+                    or utility_change
+                )
 
             # PNE found
             if not utility_change:
-                return PNE(self.auction(), i)
+                return PNE(perf_counter() - start_time, i, self.auction())
 
             # Cycle detection
             t = tuple(self.alpha)
             if t in seen:
-                return Cycle(i)
+                return Cycle(perf_counter() - start_time, i)
             seen.add(t)
 
             i += 1
