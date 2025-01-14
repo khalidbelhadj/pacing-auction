@@ -1,32 +1,38 @@
-import collections
 from dataclasses import dataclass
 from math import ceil
 from time import perf_counter
 from typing import NamedTuple, Optional
 import json
 
+
 import numpy as np
 from numpy.random import shuffle, random, randint  # type: ignore
 from numpy.typing import NDArray
 
 from allocation import Allocation
-from elimination import Elimination, Subsequent
+import elimination
+
+from concurrent.futures import Future, ThreadPoolExecutor
+
+import logging
+
+logger = logging.getLogger("simulation")
 
 
 @dataclass
 class SimulationResult:
     time: float
+    iteration: int
 
 
 @dataclass
 class Cycle(SimulationResult):
-    iteration: int
+    pass
 
 
 @dataclass
 class PNE(SimulationResult):
     allocations: list[Allocation]
-    iteration: int
 
 
 class Violation(NamedTuple):
@@ -44,10 +50,8 @@ class Simulation:
         n: int,
         m: int,
         q: int,
-        elimination: Optional[Elimination] = None,
         no_budget: bool = False,
     ) -> None:
-        self.elimination: Elimination = elimination or Subsequent(n, m)
 
         self.n: int = n
         self.m: int = m
@@ -66,28 +70,18 @@ class Simulation:
             [randint(0, q) / q for _ in range(n)]
         )
 
-    def reset(self) -> None:
-        self.elimination.clear()
-        self.__init__(self.n, self.m, self.q, self.elimination)
-
     def load(self, file: str) -> None:
-        raise NotImplementedError
-        # with open(file) as f:
-        #     state = json.load(f)
-        #     try:
-        #         self.n = state["n"]
-        #         self.m = state["m"]
-        #         self.q = state["q"]
-        #         self.b = np.array(state["budget"])
-        #         # assert self.b.size == self.n, "Invalid budget, must have n elements"
-        #         self.v = np.array([np.array(vi) for vi in state["valuation"]])
-        #         # assert (
-        #         #     self.v.size == self.n
-        #         # ), "Invalid valuation, must have n x m elements"
-        #         self.alpha = np.array(state["alpha"])
-        #         # assert len(self.alpha) == self.n, "Invalid alpha, must have n elements"
-        #     except KeyError:
-        #         raise ValueError("Invalid state file")
+        with open(file) as f:
+            state = json.load(f)
+            try:
+                self.n = state["n"]
+                self.m = state["m"]
+                self.q = state["q"]
+                self.b = np.array(state["budget"])
+                self.v = np.array([np.array(vi) for vi in state["valuation"]])
+                self.alpha = np.array(state["alpha"])
+            except KeyError:
+                raise ValueError("Invalid state file")
 
     def save(self, file_name: str) -> None:
         with open(file_name, "w") as f:
@@ -96,48 +90,13 @@ class Simulation:
                     "n": self.n,
                     "m": self.m,
                     "q": self.q,
-                    "budget": self.b,
-                    "valuation": self.v,
-                    "alpha": self.alpha,
+                    "budget": list(self.b),
+                    "valuation": [list(v) for v in self.v],
+                    "alpha": list(self.alpha),
                 },
                 f,
                 indent=4,
             )
-
-    def fpa(self) -> FPAAllocation | Violation:
-        allocations: list[Allocation] = []
-        spending: dict[int, float] = collections.defaultdict(float)
-        bids = self.v * self.alpha[:, np.newaxis]
-
-        for auction in range(self.m):
-            winner = None
-            winning_bid = -1
-
-            for bidder in range(self.n):
-                bid = bids[bidder][auction]
-
-                if bid > winning_bid and not self.elimination.is_eliminated(
-                    bidder, auction
-                ):
-                    winner = bidder
-                    winning_bid = bid
-
-            if winner is not None:
-                allocations.append(Allocation(winner, auction, winning_bid))
-                spending[winner] += winning_bid
-                if spending[winner] > self.b[winner]:
-                    return Violation(winner, auction)
-
-        return FPAAllocation(allocations)
-
-    def auction(self) -> list[Allocation]:
-        self.elimination.clear()
-        while True:
-            match self.fpa():
-                case FPAAllocation(allocations):
-                    return allocations
-                case Violation(bidder, auction):
-                    self.elimination.eliminate(bidder, auction)
 
     def utility(self, bidder: int, allocations: list[Allocation]) -> float:
         utility = 0
@@ -146,30 +105,92 @@ class Simulation:
                 utility += self.v[bidder][auction] - price
         return utility
 
+    def fpa(
+        self, mask: NDArray[np.bool_], adjust: Optional[tuple[int, float]] = None
+    ) -> FPAAllocation | Violation:
+        bids = self.v * self.alpha[:, np.newaxis]
+        if adjust:
+            bidder, adjustment = adjust
+            bids[bidder] = self.v[bidder] * adjustment
+        valid_bids = np.where(mask, bids, 0)
+
+        winners: NDArray[np.int_] = np.argmax(valid_bids, axis=0)
+        spending = np.zeros(self.n)
+        allocations: list[Allocation] = []
+
+        for auction, winner in enumerate(winners):
+            bid = valid_bids[winner][auction]
+            if spending[winner] + bid > self.b[winner]:
+                return Violation(winner, auction)
+
+            spending[winner] += bid
+            allocations.append(Allocation(winner, auction, bid))
+
+        assert len(allocations) == self.m
+
+        return FPAAllocation(allocations)
+
+    def auction(self, adjust: Optional[tuple[int, float]] = None) -> list[Allocation]:
+        # mask[bidder][auction], True if not eliminated
+        mask = np.ones((self.n, self.m), dtype=bool)
+
+        while True:
+            match self.fpa(mask, adjust):
+                case FPAAllocation(allocations):
+                    return allocations
+                case Violation(bidder, auction):
+                    elimination.subsequent(bidder, auction, mask)
+
+    def best_response_threaded(self, bidder: int) -> bool:
+        util = self.utility(bidder, self.auction())
+
+        def compute(auction: int, other_bidder: int) -> tuple[float, float]:
+            # Calculate utility, if bidder matches the other bidder's bid
+            other_bid = self.alpha[other_bidder] * self.v[other_bidder][auction]
+            new_alpha = other_bid / self.v[bidder][auction]
+            new_alpha = min(ceil(new_alpha * self.q) / self.q, 1)
+            new_util = self.utility(bidder, self.auction((bidder, new_alpha)))
+            return (new_util, new_alpha)
+
+        futures: list[Future[tuple[float, float]]] = []
+        with ThreadPoolExecutor() as executor:
+            for auction in range(self.m):
+                for other_bidder in range(self.n):
+                    if other_bidder == bidder or self.v[bidder][auction] == 0:
+                        continue
+
+                    f = executor.submit(compute, auction, other_bidder)
+                    futures.append(f)
+
+        result = [f.result() for f in futures]
+        result.append((util, self.alpha[bidder]))
+        max_util, max_alpha = max(result)
+        self.alpha[bidder] = max_alpha
+        return max_util > util
+
     def best_response(self, bidder: int) -> bool:
-        current_utility = self.utility(bidder, self.auction())
-        max_utility = current_utility
-        max_alpha = self.alpha[bidder]
+        curr_alpha = self.alpha[bidder]
+        curr_util = self.utility(bidder, self.auction())
+
+        max_alpha = curr_alpha
+        max_util = curr_util
 
         for auction in range(self.m):
             for other_bidder in range(self.n):
                 if other_bidder == bidder or self.v[bidder][auction] == 0:
                     continue
 
-                # Calculate utility, if bidder matches the other bidder's bid
                 other_bid = self.alpha[other_bidder] * self.v[other_bidder][auction]
                 new_alpha = other_bid / self.v[bidder][auction]
-                self.alpha[bidder] = min(ceil(new_alpha * self.q) / self.q, 1)
-                utility = self.utility(bidder, self.auction())
+                new_alpha = min(ceil(new_alpha * self.q) / self.q, 1)
+                new_util = self.utility(bidder, self.auction((bidder, new_alpha)))
 
-                if utility > max_utility:
-                    # return True
-                    max_utility = utility
-                    max_alpha = self.alpha[bidder]
+                if new_util > max_util:
+                    max_util = new_util
+                    max_alpha = new_alpha
 
-        # return False
         self.alpha[bidder] = max_alpha
-        return max_utility > current_utility
+        return max_util > curr_util
 
     def welfare(self, allocations: list[Allocation]) -> float:
         return sum(self.utility(bidder, allocations) for bidder in range(self.n))
@@ -183,15 +204,19 @@ class Simulation:
         i = 0
         while True:
             # shuffle(order)
-            # print(i)
             utility_change = False
 
             for bidder in order:
-                utility_change = self.best_response(bidder) or utility_change
+                # TODO: alpha should be set here, and not mutated anywhere else
+                utility_change = (
+                    # self.best_response_threaded(int(bidder)) or utility_change
+                    self.best_response(int(bidder))
+                    or utility_change
+                )
 
             # PNE found
             if not utility_change:
-                return PNE(perf_counter() - start_time, self.auction(), i)
+                return PNE(perf_counter() - start_time, i, self.auction())
 
             # Cycle detection
             t = tuple(self.alpha)
