@@ -9,8 +9,8 @@ import numpy as np
 from numpy.random import shuffle, random, randint  # type: ignore
 from numpy.typing import NDArray
 
-from allocation import Allocation
-import elimination
+from honours_project.allocation import Allocation
+import honours_project.elimination as elimination
 
 from concurrent.futures import Future, ThreadPoolExecutor
 
@@ -124,7 +124,7 @@ class Simulation:
                 return Violation(winner, auction)
 
             spending[winner] += bid
-            allocations.append(Allocation(winner, auction, bid))
+            allocations.append(Allocation(int(winner), int(auction), float(bid)))
 
         assert len(allocations) == self.m
 

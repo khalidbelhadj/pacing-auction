@@ -7,8 +7,8 @@ from typing import TypedDict
 
 import numpy as np
 import pandas as pd
-from allocation import Allocation
-from simulation import PNE, Cycle, Simulation, SimulationResult
+from honours_project.allocation import Allocation
+from honours_project.simulation import PNE, Cycle, Simulation, SimulationResult
 import cProfile
 import pstats
 import logging
@@ -66,7 +66,7 @@ def sample(base_id: int, n: int, m: int, q: int) -> list[Entry]:
                     "type": TYPE_PNE if isinstance(result, PNE) else TYPE_CYCLE,
                     "allocations": allocations,
                 }
-            ).__dict__
+            )
         )
 
     return entries
@@ -82,8 +82,8 @@ def main() -> None:
             base_id *= SIM_COUNT
             result.extend(sample(base_id, n, m, q))
 
-        with open("output.json", "w") as f:
-            json.dump(result, f)
+        with open("data/output.json", "w") as f:
+            json.dump(result, f, indent=2)
 
 
 if __name__ == "__main__":
