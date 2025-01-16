@@ -1,24 +1,31 @@
 from dataclasses import dataclass
-from math import ceil, floor
-from time import perf_counter
-from typing import NamedTuple, Optional
+from math import floor
+from time import perf_counter, time
+from typing import Optional
 import json
 
 
 import numpy as np
-from numpy.random import shuffle, random, randint  # type: ignore
 from numpy.typing import NDArray
 
-from honours_project.data import *
+from honours_project.data import (
+    SimulationResult,
+    PNE,
+    Cycle,
+    Allocation,
+    FPAResult,
+    Violation,
+    FPAAllocation,
+    BestResponse,
+)
 import honours_project.elimination as elimination
-
-from concurrent.futures import Future, ThreadPoolExecutor
 
 import logging
 
 logger = logging.getLogger("simulation")
 
 
+@dataclass
 class Simulation:
     def __init__(
         self,
@@ -27,7 +34,10 @@ class Simulation:
         q: int = 1000,
         no_budget: bool = False,
         shuffle: bool = True,
+        seed: Optional[int] = None,
     ) -> None:
+        self.seed = seed if seed is not None else int(time())
+        np.random.seed(self.seed)
 
         self.n: int = n
         self.m: int = m
@@ -35,16 +45,16 @@ class Simulation:
         self.shuffle: bool = shuffle
 
         # budget[bidder]
-        self.b: NDArray[np.float64] = np.array([random() for _ in range(n)])
+        self.b: NDArray[np.float64] = np.array([np.random.random() for _ in range(n)])
         if no_budget:
             self.b = np.full(n, np.inf)
 
         # valuation[bidder][auction]
-        self.v: NDArray[np.float64] = random((n, m))
+        self.v: NDArray[np.float64] = np.random.random((n, m))
 
         # alpha[bidder], multiples of q
         self.alpha: NDArray[np.float64] = np.array(
-            [randint(0, q) / q for _ in range(n)]
+            [np.random.randint(0, q) / q for _ in range(n)]
         )
 
     def load(self, file: str) -> None:
@@ -117,6 +127,8 @@ class Simulation:
                     return allocations
                 case Violation(bidder, auction):
                     elimination.subsequent(bidder, auction, mask)
+                case _:
+                    pass
 
     # def best_response_threaded(self, bidder: int) -> bool:
     #     util = self.utility(bidder, self.auction())
@@ -162,10 +174,12 @@ class Simulation:
                     continue
 
                 other_bid = self.alpha[other_bidder] * self.v[other_bidder][auction]
+
                 multiple = other_bid / self.v[bidder][auction]
                 # Add 1 to outbid the other bidder by 1/q
                 q_multiple = floor(multiple * self.q) + 1
                 new_alpha = min(q_multiple / self.q, 1.0)
+
                 auction_result = self.auction((bidder, new_alpha))
                 new_util = self.utility(bidder, auction_result)
 
@@ -187,14 +201,15 @@ class Simulation:
         i = 0
         while True:
             if self.shuffle:
-                shuffle(order)
+                np.random.shuffle(order)
             utility_change = False
 
             for bidder in order:
                 res = self.best_response(int(bidder))
                 if res.new_utility > res.old_utility:
                     utility_change = True
-                    self.alpha[bidder] = res.new_alpha
+                    # round new alpha to 1/q
+                    self.alpha[bidder] = res.new_alpha * self.q
 
             # PNE found
             if not utility_change:
