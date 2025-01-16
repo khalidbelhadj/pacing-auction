@@ -1,5 +1,5 @@
 import numpy as np
-from honours_project.data import PNE, Cycle
+from honours_project.data import PNE, Cycle, SimulationResult
 from honours_project.simulation import Simulation
 import logging
 

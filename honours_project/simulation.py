@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from math import floor
 from time import perf_counter, time
-from typing import Optional
+from typing import Optional, Type
 import json
 
 
@@ -24,6 +24,8 @@ import logging
 
 logger = logging.getLogger("simulation")
 
+from typing import Type
+
 
 class Simulation:
     def __init__(
@@ -31,10 +33,12 @@ class Simulation:
         n: int,
         m: int,
         q: int = 1000,
+        elim_strategy: elimination.ElimStrategy = elimination.Subsequent,
         no_budget: bool = False,
         shuffle: bool = True,
         seed: Optional[int] = None,
     ) -> None:
+        self.elim: elimination.ElimStrategy = elim_strategy
         self.seed = seed if seed is not None else int(time())
         np.random.seed(self.seed)
 
@@ -56,33 +60,20 @@ class Simulation:
             [np.random.randint(0, q) for _ in range(n)]
         )
 
-    def load(self, file: str) -> None:
-        with open(file) as f:
-            state = json.load(f)
-            try:
-                self.n = state["n"]
-                self.m = state["m"]
-                self.q = state["q"]
-                self.b = np.array(state["budget"])
-                self.v = np.array([np.array(vi) for vi in state["valuation"]])
-                self.alpha_q = np.array(state["alpha"])
-            except KeyError:
-                raise ValueError("Invalid state file")
+    @classmethod
+    def load(cls, file_path: str) -> "Simulation":
+        with open(file_path, "r") as file:
+            data = json.load(file)
 
-    def save(self, file_name: str) -> None:
-        with open(file_name, "w") as f:
-            json.dump(
-                {
-                    "n": self.n,
-                    "m": self.m,
-                    "q": self.q,
-                    "budget": list(self.b),
-                    "valuation": [list(v) for v in self.v],
-                    "alpha": list(self.alpha_q),
-                },
-                f,
-                indent=4,
-            )
+        instance = cls.__new__(cls)
+        for key, value in data.items():
+            setattr(instance, key, value)
+
+        return instance
+
+    def save(self, file_path: str) -> None:
+        with open(file_path, "w") as file:
+            json.dump(self.__dict__, file)
 
     def utility(self, bidder: int, allocations: list[Allocation]) -> float:
         utility = 0
@@ -125,7 +116,7 @@ class Simulation:
                 case FPAAllocation(allocations):
                     return allocations
                 case Violation(bidder, auction):
-                    elimination.subsequent(bidder, auction, mask)
+                    self.elim.eliminate(bidder, auction, mask)
                 case _:
                     pass
 

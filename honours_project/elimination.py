@@ -1,14 +1,27 @@
+from enum import Enum
+from typing import Protocol
 import numpy as np
 from numpy.typing import NDArray
 
 
-def subsequent(bidder: int, auction: int, mask: NDArray[np.bool_]) -> None:
-    mask[bidder, auction:] = False
+class ElimStrategy(Protocol):
+    @staticmethod
+    def eliminate(bidder: int, auction: int, mask: NDArray[np.bool_]) -> None: ...
 
 
-def all(bidder: int, auction: int, mask: NDArray[np.bool_]) -> None:
-    mask[bidder, :] = False
+class Subsequent(ElimStrategy):
+    @staticmethod
+    def eliminate(bidder: int, auction: int, mask: NDArray[np.bool_]) -> None:
+        mask[bidder, auction:] = False
 
 
-def current(bidder: int, auction: int, mask: NDArray[np.bool_]) -> None:
-    mask[bidder, auction] = False
+class All(ElimStrategy):
+    @staticmethod
+    def eliminate(bidder: int, auction: int, mask: NDArray[np.bool_]) -> None:
+        mask[bidder, :] = False
+
+
+class Current(ElimStrategy):
+    @staticmethod
+    def eliminate(bidder: int, auction: int, mask: NDArray[np.bool_]) -> None:
+        mask[bidder, auction] = False
