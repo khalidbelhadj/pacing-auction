@@ -1,6 +1,9 @@
 import numpy as np
 from honours_project.data import PNE, Cycle
 from honours_project.simulation import Simulation
+import logging
+
+logger = logging.getLogger("test_correctness")
 
 
 def test_dominant_player():
@@ -30,3 +33,43 @@ def test_pne_nonexistence():
 
     result = sim.run()
     assert isinstance(result, Cycle)
+
+
+def test_seperate_preferences():
+    """
+    Each bidder has a strong preference to a seperate item
+    """
+    sim = Simulation(5, 5, no_budget=True)
+    sim.v = np.full((5, 5), 0.0)
+    for bidder in range(5):
+        sim.v[bidder][bidder] = 1.0
+
+    result = sim.run()
+    assert isinstance(result, PNE)
+    assert all(
+        a.bidder == i and a.auction == i and a.price == 1 / sim.q
+        for i, a in enumerate(result.allocations)
+    )
+
+
+def test_same_after_rerun():
+    """
+    The same result is returned after re-running the simulation
+    """
+    pne_count = 0
+    cycle_count = 0
+
+    while pne_count < 10 or cycle_count < 10:
+        sim = Simulation(5, 2, seed=1737044418)
+        result1 = sim.run()
+        result2 = sim.run()
+
+        if type(result1) != type(result2):
+            logger.error(f"{sim.seed=}")
+        assert type(result1) == type(result2)
+
+        if isinstance(result1, PNE) and isinstance(result2, PNE):
+            pne_count += 1
+            assert result1.allocations == result2.allocations
+        elif isinstance(result1, Cycle) and isinstance(result2, Cycle):
+            cycle_count += 1
