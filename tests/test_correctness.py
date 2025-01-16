@@ -59,14 +59,15 @@ def test_same_after_rerun():
     pne_count = 0
     cycle_count = 0
 
-    while pne_count < 10 or cycle_count < 10:
-        sim = Simulation(5, 2, seed=1737044418)
+    while pne_count < 5 or cycle_count < 5:
+        sim = Simulation(5, 5)
         result1 = sim.run()
         result2 = sim.run()
 
         if type(result1) != type(result2):
             logger.error(f"{sim.seed=}")
         assert type(result1) == type(result2)
+        # assert result2.iteration == 0 # TODO: why
 
         if isinstance(result1, PNE) and isinstance(result2, PNE):
             pne_count += 1

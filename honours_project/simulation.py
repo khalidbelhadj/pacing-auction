@@ -25,7 +25,6 @@ import logging
 logger = logging.getLogger("simulation")
 
 
-@dataclass
 class Simulation:
     def __init__(
         self,
@@ -183,7 +182,7 @@ class Simulation:
                 res = self.best_response(int(bidder))
                 if res.new_utility > res.old_utility:
                     utility_change = True
-                    self.alpha_q[bidder] = res.new_alpha_q * self.q
+                    self.alpha_q[bidder] = res.new_alpha_q
 
             # PNE found
             if not utility_change:
