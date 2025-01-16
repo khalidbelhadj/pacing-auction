@@ -7,7 +7,7 @@ from typing import TypedDict
 
 import numpy as np
 import pandas as pd
-from honours_project.allocation import Allocation
+from honours_project.data import Allocation
 from honours_project.simulation import PNE, Cycle, Simulation, SimulationResult
 import cProfile
 import pstats
@@ -38,7 +38,7 @@ class Entry(TypedDict):
     time: float
     iteration: int
     type: int
-    allocations: list[Allocation]
+    allocations: list
 
 
 def sample(base_id: int, n: int, m: int, q: int) -> list[Entry]:
@@ -64,7 +64,7 @@ def sample(base_id: int, n: int, m: int, q: int) -> list[Entry]:
                     "time": time,
                     "iteration": iteration,
                     "type": TYPE_PNE if isinstance(result, PNE) else TYPE_CYCLE,
-                    "allocations": allocations,
+                    "allocations": [a.__dict__ for a in allocations],
                 }
             )
         )
