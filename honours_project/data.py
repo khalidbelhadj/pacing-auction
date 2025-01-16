@@ -9,7 +9,7 @@ import json
 import numpy as np
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Allocation:
     bidder: int
     auction: int
@@ -19,39 +19,39 @@ class Allocation:
         return f"Allocation(bidder={self.bidder}, auction={self.auction}, price={self.price})"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SimulationResult(ABC):
     time: float
     iteration: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Cycle(SimulationResult):
     pass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PNE(SimulationResult):
     allocations: list[Allocation]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FPAResult(ABC):
     pass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Violation(FPAResult):
     bidder: int
     auction: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FPAAllocation(FPAResult):
     allocations: list[Allocation]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BestResponse:
     new_alpha_q: float
     new_utility: float
