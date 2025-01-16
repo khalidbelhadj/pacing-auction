@@ -53,7 +53,7 @@ class FPAAllocation(FPAResult):
 
 @dataclass(frozen=True)
 class BestResponse:
-    new_alpha: float
+    new_alpha_q: float
     new_utility: float
     old_utility: float
 

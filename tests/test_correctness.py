@@ -28,8 +28,8 @@ def test_pne_nonexistence():
     sim.v[0] = np.array([1.0, 1.0])
     sim.v[1] = np.array([3 / 4, 0])
 
-    sim.alpha[0] = 1
-    sim.alpha[1] = 1
+    sim.alpha_q[0] = 1
+    sim.alpha_q[1] = 1
 
     result = sim.run()
     assert isinstance(result, Cycle)
