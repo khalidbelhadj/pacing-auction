@@ -90,38 +90,37 @@ class Simulation:
         return utility
 
     def fpa(
-        self, mask: NDArray[np.bool], adjust: Optional[tuple[int, float]] = None
+        self, mask: NDArray[np.bool_], adjust: Optional[tuple[int, float]] = None
     ) -> FPAResult:
+        allocations: list[Allocation] = []
         bids = self.v * (self.alpha_q[:, np.newaxis] / self.q)
         if adjust:
             bidder, adjustment = adjust
             bids[bidder] = self.v[bidder] * (adjustment / self.q)
         valid_bids = np.where(mask, bids, 0)
-        winners: NDArray[np.int64] = np.argwhere(
-            valid_bids == np.max(valid_bids, axis=0)
-        )
-        allocations: list[Allocation] = [
-            Allocation([], auction, 0.0) for auction in range(self.m)
-        ]
-
-        # Assign winners to auctions
-        for winner, auction in winners:
-            allocations[auction].bidders.append(winner)
-
-        # Calculate prices
-        for i in range(len(allocations)):
-            a = allocations[i]
-            assert len(a.bidders) > 0
-            price = valid_bids[a.bidders[0]][a.auction]
-            allocations[i] = Allocation(a.bidders, a.auction, price / len(a.bidders))
-
-        # Check for budget violations
         spending = np.zeros(self.n)
-        for a in allocations:
-            for bidder in a.bidders:
-                spending[bidder] += a.price
-                if spending[bidder] > self.b[bidder]:
-                    return Violation(bidder, a.auction)
+
+        for auction in range(self.m):
+            winning_bidders = []
+            winning_bid = -1
+
+            for bidder in range(self.n):
+                bid = valid_bids[bidder][auction]
+                if bid > winning_bid:
+                    winning_bidders = [bidder]
+                    winning_bid = bid
+                elif bid == winning_bid:
+                    winning_bidders.append(bidder)
+
+            assert len(winning_bidders) != 0
+            assert winning_bid != -1
+
+            for winning_bidder in winning_bidders:
+                spending[winning_bidder] += winning_bid
+                if spending[winning_bidder] > self.b[winning_bidder]:
+                    return Violation(winning_bidder, auction)
+
+            allocations.append(Allocation(winning_bidders, auction, winning_bid))
 
         return FPAAllocation(allocations)
 
@@ -225,29 +224,28 @@ class Simulation:
 
     def run(self) -> SimulationResult:
         seen = set([tuple(self.alpha_q)])
-        order = np.arange(self.n)
-
-        import matplotlib.pyplot as plt
-
+        order = list(range(self.n))
         start_time = perf_counter()
-
         stats = dict()
         stats["util"] = [[] for _ in range(self.n)]
-
         i = 0
+
         while True:
-            if self.shuffle:
-                np.random.shuffle(order)
             utility_change = False
 
+            if self.shuffle:
+                np.random.shuffle(order)
+
             for bidder in order:
-                res = self.best_response(int(bidder))
+                res = self.best_response(bidder)
+
+                # Utility increased by more than epsilon
                 if res.new_utility > res.old_utility + self.epsilon:
-                    stats["util"][bidder].append(res.new_utility - res.old_utility)
+                    stats["util"][bidder].append(res.new_utility)
                     utility_change = True
                     self.alpha_q[bidder] = res.new_alpha_q
                 else:
-                    stats["util"][bidder].append(0)
+                    stats["util"][bidder].append(res.old_utility)
 
             # PNE found
             if not utility_change:
