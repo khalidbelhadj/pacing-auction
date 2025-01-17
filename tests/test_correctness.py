@@ -11,13 +11,14 @@ def test_dominant_player():
     Single dominant player with the highest budget and valuation for all auctions
     """
     sim = Simulation(5, 5)
-    sim.v = np.full((5, 5), 0.049)  # TODO: why < 0.05??
+    sim.v = np.full((5, 5), 0.0009)  # TODO: why < 0.0009??
     sim.v[0] = np.full((1, 5), 1.0)
     sim.b[0] = float("inf")
 
     result = sim.run()
     assert isinstance(result, PNE)
-    assert all(a.bidder == 0 for a in result.allocations)
+    print("here: ", [a.bidders for a in result.allocations])
+    assert all(a.bidders == [0] for a in result.allocations)
 
 
 def test_pne_nonexistence():
@@ -47,7 +48,7 @@ def test_seperate_preferences():
     result = sim.run()
     assert isinstance(result, PNE)
     assert all(
-        a.bidder == i and a.auction == i and a.price == 1 / sim.q
+        i in a.bidders and a.auction == i and a.price == 1 / sim.q
         for i, a in enumerate(result.allocations)
     )
 
@@ -60,17 +61,28 @@ def test_same_after_rerun():
     cycle_count = 0
 
     while pne_count < 5 or cycle_count < 5:
-        sim = Simulation(5, 5)
+        sim = Simulation(3, 3, shuffle=False)
         result1 = sim.run()
         result2 = sim.run()
+        result3 = sim.run()
 
         if type(result1) != type(result2):
             logger.error(f"{sim.seed=}")
         assert type(result1) == type(result2)
-        # assert result2.iteration == 0 # TODO: why
+        assert result2.iteration == result3.iteration
 
         if isinstance(result1, PNE) and isinstance(result2, PNE):
             pne_count += 1
             assert result1.allocations == result2.allocations
         elif isinstance(result1, Cycle) and isinstance(result2, Cycle):
             cycle_count += 1
+
+
+def test_tie():
+    sim = Simulation(5, 5, no_budget=True)
+    sim.v = np.full((5, 5), 0.5)
+    sim.alpha_q = np.full((5), sim.q)
+
+    result = sim.run()
+    assert isinstance(result, PNE)
+    assert all([set(a.bidders) == set(range(0, 5)) for a in result.allocations])

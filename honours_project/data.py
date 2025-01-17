@@ -1,28 +1,27 @@
 # type: ignore
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import dataclasses
 from abc import ABC
 
 import json
+from typing import Any
 
 import numpy as np
 
 
 @dataclass(frozen=True, slots=True)
 class Allocation:
-    bidder: int
+    bidders: list[int]
     auction: int
     price: float
-
-    def __repr__(self) -> str:
-        return f"Allocation(bidder={self.bidder}, auction={self.auction}, price={self.price})"
 
 
 @dataclass(frozen=True, slots=True)
 class SimulationResult(ABC):
     time: float
     iteration: int
+    stats: dict[str, Any] = field(default_factory=dict, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
