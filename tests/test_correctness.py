@@ -1,5 +1,5 @@
 import numpy as np
-from honours_project.data import PNE, Cycle, SimulationResult
+from honours_project.data import PNE, Cycle
 from honours_project.simulation import Simulation
 import logging
 
@@ -17,7 +17,6 @@ def test_dominant_player():
 
     result = sim.run()
     assert isinstance(result, PNE)
-    print("here: ", [a.bidders for a in result.allocations])
     assert all(a.bidders == [0] for a in result.allocations)
 
 
@@ -36,9 +35,9 @@ def test_pne_nonexistence():
     assert isinstance(result, Cycle)
 
 
-def test_seperate_preferences():
+def test_separate_preferences():
     """
-    Each bidder has a strong preference to a seperate item
+    Each bidder has a strong preference to a separate item
     """
     sim = Simulation(5, 5, no_budget=True)
     sim.v = np.full((5, 5), 0.0)
@@ -79,10 +78,22 @@ def test_same_after_rerun():
 
 
 def test_tie():
+    """
+    A tie between all bidders
+    """
     sim = Simulation(5, 5, no_budget=True)
     sim.v = np.full((5, 5), 0.5)
-    sim.alpha_q = np.full((5), sim.q)
+    sim.alpha_q = np.full(5, sim.q)
 
     result = sim.run()
     assert isinstance(result, PNE)
     assert all([set(a.bidders) == set(range(0, 5)) for a in result.allocations])
+    assert all([a.price == 0.5 for a in result.allocations])
+
+
+def test_all_eliminated():
+    """
+    Every bidder is eliminated from one of the auctions
+    """
+    # TODO:
+    pass

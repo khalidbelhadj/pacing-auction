@@ -1,21 +1,19 @@
+from dataclasses import dataclass
+import json
+import logging
 from concurrent.futures import (
     Future,
-    ProcessPoolExecutor,
     ThreadPoolExecutor,
     as_completed,
 )
-from dataclasses import dataclass
-from functools import lru_cache
 from math import floor
-import threading
 from time import perf_counter, time
-from typing import Optional, Type
-import json
-
+from typing import Any, Optional
 
 import numpy as np
 from numpy.typing import NDArray
 
+import honours_project.elimination as elimination
 from honours_project.data import (
     SimulationResult,
     PNE,
@@ -26,50 +24,43 @@ from honours_project.data import (
     FPAAllocation,
     BestResponse,
 )
-import honours_project.elimination as elimination
-
-import logging
 
 logger = logging.getLogger("simulation")
 
 
+@dataclass
 class Simulation:
-    def __init__(
-        self,
-        n: int,
-        m: int,
-        q: int = 1000,
-        elim_strategy: elimination.ElimStrategy = elimination.Subsequent,
-        no_budget: bool = False,
-        shuffle: bool = True,
-        seed: Optional[int] = None,
-        epsilon: float = 0.0,
-    ) -> None:
-        self.n: int = n
-        self.m: int = m
-        self.q: int = q
-        self.elim: elimination.ElimStrategy = elim_strategy
-        self.shuffle: bool = shuffle
-        self.seed: int = seed if seed is not None else int(time())
+    n: int
+    m: int
+    q: int = 1000
+    elim: elimination.ElimStrategy = elimination.Subsequent
+    no_budget: bool = False
+    shuffle: bool = True
+    start_seed: Optional[int] = None
+    epsilon: float = 0.0
+
+    def __post_init__(self):
+        self.seed = self.start_seed if self.start_seed is not None else int(time())
         np.random.seed(self.seed)
-        self.epsilon: float = epsilon
 
         # budget[bidder]
-        self.b: NDArray[np.float64] = np.array([np.random.random() for _ in range(n)])
-        if no_budget:
-            self.b = np.full(n, np.inf)
+        self.b: NDArray[np.float64] = np.array(
+            [np.random.random() for _ in range(self.n)]
+        )
+        if self.no_budget:
+            self.b = np.full(self.n, np.inf)
 
         # valuation[bidder][auction]
-        self.v: NDArray[np.float64] = np.random.random((n, m))
+        self.v: NDArray[np.float64] = np.random.random((self.n, self.m))
 
         # alpha[bidder], multiples of q
         self.alpha_q: NDArray[np.uint64] = np.array(
-            [np.random.randint(0, q) for _ in range(n)]
+            [np.random.randint(0, self.q) for _ in range(self.n)]
         )
 
     @classmethod
     def load(cls, file_path: str) -> "Simulation":
-        with open(file_path, "r") as file:
+        with open(file_path, "r", encoding="utf-8") as file:
             data = json.load(file)
 
         instance = cls.__new__(cls)
@@ -79,7 +70,7 @@ class Simulation:
         return instance
 
     def save(self, file_path: str) -> None:
-        with open(file_path, "w") as file:
+        with open(file_path, "w", encoding="utf-8") as file:
             json.dump(self.__dict__, file)
 
     def utility(self, bidder: int, allocations: list[Allocation]) -> float:
@@ -226,9 +217,10 @@ class Simulation:
         seen = set([tuple(self.alpha_q)])
         order = list(range(self.n))
         start_time = perf_counter()
-        stats = dict()
-        stats["util"] = [[] for _ in range(self.n)]
-        i = 0
+        stats = dict[str, Any]()
+        util: list[list[float]] = [[] for _ in range(self.n)]
+        stats["util"] = util
+        iteration = 1
 
         while True:
             utility_change = False
@@ -241,20 +233,22 @@ class Simulation:
 
                 # Utility increased by more than epsilon
                 if res.new_utility > res.old_utility + self.epsilon:
-                    stats["util"][bidder].append(res.new_utility)
+                    util[bidder].append(res.new_utility)
                     utility_change = True
                     self.alpha_q[bidder] = res.new_alpha_q
                 else:
-                    stats["util"][bidder].append(res.old_utility)
+                    util[bidder].append(res.old_utility)
 
             # PNE found
             if not utility_change:
-                return PNE(perf_counter() - start_time, i, self.auction(), stats=stats)
+                return PNE(
+                    perf_counter() - start_time, iteration, self.auction(), stats=stats
+                )
 
             # Cycle detection
             t = tuple(self.alpha_q)
             if t in seen:
-                return Cycle(perf_counter() - start_time, i, stats=stats)
+                return Cycle(perf_counter() - start_time, iteration, stats=stats)
             seen.add(t)
 
-            i += 1
+            iteration += 1

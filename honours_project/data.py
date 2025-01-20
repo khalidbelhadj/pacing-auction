@@ -14,14 +14,14 @@ import numpy as np
 class Allocation:
     bidders: list[int]
     auction: int
-    price: float
+    price: float  # Total price paid by all bidders
 
 
 @dataclass(frozen=True, slots=True)
 class SimulationResult(ABC):
     time: float
     iteration: int
-    stats: dict[str, Any] = field(default_factory=dict, kw_only=True)
+    stats: dict[str, Any] = field(default_factory=dict, kw_only=True, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
