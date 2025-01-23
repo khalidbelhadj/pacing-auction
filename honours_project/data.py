@@ -33,19 +33,15 @@ class PNE(SimulationResult):
 
 
 @dataclass(frozen=True, slots=True)
-class FPAResult(ABC):
-    pass
-
-
-@dataclass(frozen=True, slots=True)
-class Violation(FPAResult):
+class Violation:
     bidder: int
     auction: int
 
 
 @dataclass(frozen=True, slots=True)
-class FPAAllocation(FPAResult):
+class FPAAllocation:
     allocations: list[Allocation]
+    utility: float
 
 
 @dataclass(frozen=True, slots=True)

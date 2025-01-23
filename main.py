@@ -16,22 +16,21 @@ logger.addHandler(queue_handler)
 
 
 def main() -> None:
-    sim = Simulation(10, 5, epsilon=0.1)
-    result = sim.run()
-    print(result)
+    cool_seed = 1737125327  # 10, 7
+
+    sim = Simulation(10, 7, shuffle=False, seed=cool_seed)
+    res = sim.run()
+
+    print(f"Seed:               {sim.seed}")
+    print(f"Result:             {res}")
+    print(f"Time:               {round(res.stats['time'], 2)}s")
+    print(f"Time per Iteration: {1000 * round(res.stats["time"] / res.iteration, 4)}ms")
 
 
 if __name__ == "__main__":
     listener = logging.handlers.QueueListener(log_queue)
     listener.start()
     try:
-        if len(sys.argv) > 1 and sys.argv[1] == "profile":
-            with cProfile.Profile() as pr:
-                main()
-                stats = pstats.Stats(pr)
-                stats.sort_stats(pstats.SortKey.TIME)
-                stats.print_stats()
-        else:
-            main()
+        main()
     finally:
         listener.stop()
