@@ -1,8 +1,10 @@
 __pycache__/
 .idea/
 .vscode/
-.venv
+.venv*
 data/*
 .DS_Store
 .pytest_cache
 playground.ipynb
+.mypy_cache
+.ropeproject

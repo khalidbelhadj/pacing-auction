@@ -123,7 +123,7 @@ def main():
     status = sysconfig.get_config_var("Py_GIL_DISABLED")
 
     if py_version >= 3.13:
-        status = sys._is_gil_enabled()
+        status = sys._is_gil_enabled()  # type: ignore
     if status is None:
         print("GIL cannot be disabled for Python version <= 3.12")
     if status == 0:

@@ -1,23 +1,16 @@
-from concurrent.futures import ProcessPoolExecutor, as_completed
 import logging.handlers
 import queue
 import sys
 
-from typing import TypedDict
-
-import numpy as np
-import pandas as pd
-from honours_project.data import Allocation
-from honours_project.simulation import PNE, Cycle, Simulation, SimulationResult
+from honours_project.simulation import Simulation
 import cProfile
 import pstats
 import logging
 
-# Set up logging
 logger = logging.getLogger("main")
 logging.basicConfig(level=logging.DEBUG)
 
-log_queue = queue.Queue(-1)
+log_queue: queue.Queue = queue.Queue(-1)
 queue_handler = logging.handlers.QueueHandler(log_queue)
 logger.addHandler(queue_handler)
 

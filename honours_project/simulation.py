@@ -36,21 +36,22 @@ class Simulation:
     elim: elimination.ElimStrategy = elimination.Subsequent
     no_budget: bool = False
     shuffle: bool = True
-    start_seed: Optional[int] = None
+    seed: Optional[int] = None
     epsilon: float = 0.0
+    threaded: bool = True
 
-    def __post_init__(self):
-        self.seed = self.start_seed if self.start_seed is not None else int(time())
+    def __post_init__(self) -> None:
+        self.seed = self.seed if self.seed is not None else int(time())
         np.random.seed(self.seed)
 
-        # budget[bidder]
+        # budget[bidder] is the budget of `bidder`
         self.b: NDArray[np.float64] = np.array(
             [np.random.random() for _ in range(self.n)]
         )
         if self.no_budget:
             self.b = np.full(self.n, np.inf)
 
-        # valuation[bidder][auction]
+        # v[bidder][auction] is the valuation of `bidder` for `auction`
         self.v: NDArray[np.float64] = np.random.random((self.n, self.m))
 
         # alpha[bidder], multiples of q
@@ -80,16 +81,10 @@ class Simulation:
                 utility += self.v[bidder][a.auction] - a.price
         return utility
 
-    def fpa(
-        self, mask: NDArray[np.bool_], adjust: Optional[tuple[int, float]] = None
-    ) -> FPAResult:
-        allocations: list[Allocation] = []
-        bids = self.v * (self.alpha_q[:, np.newaxis] / self.q)
-        if adjust:
-            bidder, adjustment = adjust
-            bids[bidder] = self.v[bidder] * (adjustment / self.q)
+    def fpa(self, mask: NDArray[np.bool], bids: NDArray[np.float64]) -> FPAResult:
         valid_bids = np.where(mask, bids, 0)
         spending = np.zeros(self.n)
+        allocations: list[Allocation] = []
 
         for auction in range(self.m):
             winning_bidders = []
@@ -115,12 +110,20 @@ class Simulation:
 
         return FPAAllocation(allocations)
 
-    def auction(self, adjust: Optional[tuple[int, float]] = None) -> list[Allocation]:
+    def auction(
+        self, adjustment: Optional[tuple[int, float]] = None
+    ) -> list[Allocation]:
         # mask[bidder][auction], True if not eliminated
         mask = np.ones((self.n, self.m), dtype=bool)
 
+        # Precompute bids
+        bids = (self.v * (self.alpha_q[:, np.newaxis] / self.q)).astype(np.float64)
+        if adjustment is not None:
+            bidder, new_alpha_q = adjustment
+            bids[bidder] = self.v[bidder] * (new_alpha_q / self.q)
+
         while True:
-            match self.fpa(mask, adjust):
+            match self.fpa(mask, bids):
                 case FPAAllocation(allocations):
                     return allocations
                 case Violation(bidder, auction):
@@ -146,7 +149,7 @@ class Simulation:
 
             multiple = other_bid / self.v[bidder][auction]
             # Add 1 to outbid the other bidder by 1/q
-            q_multiple = floor(multiple * self.q) + 1
+            q_multiple = int(floor(multiple * self.q) + 1)
             new_alpha_q = min(q_multiple, self.q)
 
             auction_result = self.auction((bidder, new_alpha_q))
@@ -188,25 +191,10 @@ class Simulation:
         max_util = curr_util
 
         for auction in range(self.m):
-            for other_bidder in range(self.n):
-                if other_bidder == bidder or self.v[bidder][auction] == 0:
-                    continue
-
-                other_bid = self.v[other_bidder][auction] * (
-                    self.alpha_q[other_bidder] / self.q
-                )
-
-                multiple = other_bid / self.v[bidder][auction]
-                # Add 1 to outbid the other bidder by 1/q
-                q_multiple = floor(multiple * self.q) + 1
-                new_alpha_q = min(q_multiple, self.q)
-
-                auction_result = self.auction((bidder, new_alpha_q))
-                new_util = self.utility(bidder, auction_result)
-
-                if new_util > max_util:
-                    max_util = new_util
-                    max_alpha_q = new_alpha_q
+            res = self.best_response_auction(bidder, auction)
+            if res.new_utility > max_util:
+                max_util = res.new_utility
+                max_alpha_q = res.new_alpha_q
 
         return BestResponse(max_alpha_q, max_util, curr_util)
 
@@ -214,13 +202,20 @@ class Simulation:
         return sum(self.utility(bidder, allocations) for bidder in range(self.n))
 
     def run(self) -> SimulationResult:
+        # Data collection
+        stats = dict[str, Any]()
+
+        stats["util"] = [list[float]() for _ in range(self.n)]
+        util = stats["util"]
+
+        stats["util_diff"] = [list[float]() for _ in range(self.n)]
+        util_diff = stats["util_diff"]
+
+        start_time = perf_counter()
+        iteration = 1
+
         seen = set([tuple(self.alpha_q)])
         order = list(range(self.n))
-        start_time = perf_counter()
-        stats = dict[str, Any]()
-        util: list[list[float]] = [[] for _ in range(self.n)]
-        stats["util"] = util
-        iteration = 1
 
         while True:
             utility_change = False
@@ -229,26 +224,32 @@ class Simulation:
                 np.random.shuffle(order)
 
             for bidder in order:
-                res = self.best_response(bidder)
+                res = (
+                    self.best_response_threaded(bidder)
+                    if self.threaded
+                    else self.best_response(bidder)
+                )
 
                 # Utility increased by more than epsilon
                 if res.new_utility > res.old_utility + self.epsilon:
                     util[bidder].append(res.new_utility)
+                    util_diff[bidder].append(res.new_utility - res.old_utility)
                     utility_change = True
                     self.alpha_q[bidder] = res.new_alpha_q
                 else:
                     util[bidder].append(res.old_utility)
+                    util_diff[bidder].append(0)
 
             # PNE found
             if not utility_change:
-                return PNE(
-                    perf_counter() - start_time, iteration, self.auction(), stats=stats
-                )
+                stats["time"] = perf_counter() - start_time
+                return PNE(iteration, self.auction(), stats=stats)
 
             # Cycle detection
             t = tuple(self.alpha_q)
             if t in seen:
-                return Cycle(perf_counter() - start_time, iteration, stats=stats)
+                stats["time"] = perf_counter() - start_time
+                return Cycle(iteration, stats=stats)
             seen.add(t)
 
             iteration += 1

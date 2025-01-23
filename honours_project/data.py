@@ -1,4 +1,3 @@
-# type: ignore
 from dataclasses import dataclass, field
 
 import dataclasses
@@ -19,7 +18,6 @@ class Allocation:
 
 @dataclass(frozen=True, slots=True)
 class SimulationResult(ABC):
-    time: float
     iteration: int
     stats: dict[str, Any] = field(default_factory=dict, kw_only=True, repr=False)
 
@@ -61,20 +59,18 @@ class EnhancedJSONEncoder(json.JSONEncoder):
     def default(self, o: object) -> object:
         # Dataclass serialisation
         if dataclasses.is_dataclass(o):
-            return dataclasses.asdict(o)
+            return dataclasses.asdict(o)  # type: ignore
 
         # Numpy serialisation
-        if isinstance(o, (np.bool_)):
+        if isinstance(o, (np.bool)):
             return bool(o)
-        elif isinstance(
-            o, (np.int_, np.intc, np.intp, np.int8, np.int16, np.int32, np.int64)
-        ):
+        elif isinstance(o, (np.intc, np.intp, np.int8, np.int16, np.int32, np.int64)):  # type: ignore
             return int(o)
-        elif isinstance(o, (np.uint8, np.uint16, np.uint32, np.uint64)):
+        elif isinstance(o, (np.uint8, np.uint16, np.uint32, np.uint64)):  # type: ignore
             return int(o)
-        elif isinstance(o, (np.float16, np.float32, np.float64)):
+        elif isinstance(o, (np.float16, np.float32, np.float64)):  # type: ignore
             return float(o)
-        elif isinstance(o, (np.complex64, np.complex128)):
+        elif isinstance(o, (np.complex64, np.complex128)):  # type: ignore
             return {"real": o.real, "imag": o.imag}
         elif isinstance(o, (np.ndarray,)):
             return o.tolist()
