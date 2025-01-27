@@ -19,7 +19,7 @@ class Allocation:
 @dataclass(frozen=True, slots=True)
 class SimulationResult(ABC):
     iteration: int
-    stats: dict[str, Any] = field(default_factory=dict, kw_only=True, repr=False)
+    stats: dict[str, Any] = field(kw_only=True, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +46,7 @@ class FPAAllocation:
 
 @dataclass(frozen=True, slots=True)
 class BestResponse:
+    bidder: int
     new_alpha_q: float
     new_utility: float
     old_utility: float
@@ -59,19 +60,19 @@ class EnhancedJSONEncoder(json.JSONEncoder):
 
         # Numpy serialisation
         if isinstance(o, (np.bool)):
-            return bool(o)
+            return bool(o)  # type: ignore
         elif isinstance(o, (np.intc, np.intp, np.int8, np.int16, np.int32, np.int64)):  # type: ignore
-            return int(o)
+            return int(o)  # type: ignore
         elif isinstance(o, (np.uint8, np.uint16, np.uint32, np.uint64)):  # type: ignore
-            return int(o)
+            return int(o)  # type: ignore
         elif isinstance(o, (np.float16, np.float32, np.float64)):  # type: ignore
-            return float(o)
+            return float(o)  # type: ignore
         elif isinstance(o, (np.complex64, np.complex128)):  # type: ignore
-            return {"real": o.real, "imag": o.imag}
+            return {"real": o.real, "imag": o.imag}  # type: ignore
         elif isinstance(o, (np.ndarray,)):
             return o.tolist()
         elif isinstance(o, (np.bool)):
-            return bool(o)
+            return bool(o)  # type: ignore
         elif isinstance(o, (np.void)):
             return None
 

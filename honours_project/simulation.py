@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import logging
 from concurrent.futures import (
@@ -8,7 +8,7 @@ from concurrent.futures import (
 )
 from math import floor
 from time import perf_counter, time
-from typing import Any, Optional
+from typing import Any, Callable, Generator, Iterable, Optional
 
 import numpy as np
 from numpy.typing import NDArray
@@ -38,25 +38,31 @@ class Simulation:
     seed: Optional[int] = None
     epsilon: float = 0.0
     threaded: bool = True
+    discrete_v: Optional[Iterable[float]] = None
+    collect_stats: bool = False
 
     def __post_init__(self) -> None:
         self.seed = self.seed if self.seed is not None else int(time())
         np.random.seed(self.seed)
 
         # budget[bidder] is the budget of `bidder`
-        self.b: NDArray[np.float64] = np.array(
-            [np.random.random() for _ in range(self.n)]
-        )
         if self.no_budget:
             self.b = np.full(self.n, np.inf)
+        else:
+            self.b: NDArray[np.float64] = np.array(
+                [np.random.random() for _ in range(self.n)]
+            )
 
         # v[bidder][auction] is the valuation of `bidder` for `auction`
-        self.v: NDArray[np.float64] = np.random.random((self.n, self.m))
+        if self.discrete_v:
+            self.v: NDArray[np.float64] = np.random.choice(
+                list(self.discrete_v), size=(self.n, self.m)
+            )
+        else:
+            self.v: NDArray[np.float64] = np.random.random((self.n, self.m))
 
         # alpha[bidder], multiples of q
-        self.alpha_q: NDArray[np.uint64] = np.array(
-            [np.random.randint(0, self.q) for _ in range(self.n)]
-        )
+        self.alpha_q: NDArray[np.uint64] = np.array([self.q for _ in range(self.n)])
 
     @classmethod
     def load(cls, file_path: str) -> "Simulation":
@@ -132,8 +138,6 @@ class Simulation:
                     return allocations
                 case Violation(bidder, auction):
                     self.elim.eliminate(bidder, auction, mask)
-                case _:
-                    pass
 
     def fpa_utility(
         self, bids: NDArray[np.float64], main_bidder: int
@@ -155,9 +159,6 @@ class Simulation:
                     winning_bid = bid
                 elif bid == winning_bid:
                     winning_bidders.append(bidder)
-
-            assert len(winning_bidders) != 0
-            assert winning_bid != -1
 
             for winning_bidder in winning_bidders:
                 spending[winning_bidder] += winning_bid / len(winning_bidders)
@@ -221,7 +222,7 @@ class Simulation:
                 max_util = new_util
                 max_alpha_q = new_alpha_q
 
-        return BestResponse(max_alpha_q, max_util, curr_util)
+        return BestResponse(bidder, max_alpha_q, max_util, curr_util)
 
     def best_response_threaded(self, bidder: int) -> BestResponse:
         """
@@ -233,10 +234,9 @@ class Simulation:
         curr_util = self.utility(bidder)
 
         futures: list[Future[BestResponse]] = []
-        with ThreadPoolExecutor() as executor:
-            for auction in range(self.m):
-                f = executor.submit(self.best_response_auction, bidder, auction)
-                futures.append(f)
+        for auction in range(self.m):
+            f = self.executor.submit(self.best_response_auction, bidder, auction)
+            futures.append(f)
 
         # Accumulate results from each auction
         max_util = curr_util
@@ -247,7 +247,7 @@ class Simulation:
                 max_util = res.new_utility
                 max_alpha_q = res.new_alpha_q
 
-        return BestResponse(max_alpha_q, max_util, curr_util)
+        return BestResponse(bidder, max_alpha_q, max_util, curr_util)
 
     def best_response(self, bidder: int) -> BestResponse:
         """
@@ -265,24 +265,27 @@ class Simulation:
                 max_util = res.new_utility
                 max_alpha_q = res.new_alpha_q
 
-        return BestResponse(max_alpha_q, max_util, curr_util)
+        return BestResponse(bidder, max_alpha_q, max_util, curr_util)
 
-    def run(self) -> SimulationResult:
+    def run(
+        self,
+        on_best_response: Optional[Callable[["Simulation", BestResponse], None]] = None,
+    ) -> SimulationResult:
         """
         Run the simulation until a PNE or cycle is found
         """
-        # Data collection
-        stats = dict[str, Any]()
+        self.executor = ThreadPoolExecutor()
 
-        stats["util"] = [list[float]() for _ in range(self.n)]
-        util = stats["util"]
+        # Set up stats to be collected
+        self.stats: Optional[dict[str, Any]] = None
+        if self.collect_stats:
+            self.stats = dict()
+            self.stats["util"] = [list[float]() for _ in range(self.n)]
+            self.stats["alphas"] = [list[float]() for _ in range(self.n)]
+            self.stats["win_counts"] = [[0] * self.m for _ in range(self.n)]
+            self.stats["time"] = perf_counter()
 
-        stats["util_diff"] = [list[float]() for _ in range(self.n)]
-        util_diff = stats["util_diff"]
-
-        start_time = perf_counter()
         iteration = 1
-
         seen = set([tuple(self.alpha_q)])
         order = list(range(self.n))
 
@@ -293,6 +296,9 @@ class Simulation:
                 np.random.shuffle(order)
 
             for bidder in order:
+                if self.stats:
+                    self.stats["alphas"][bidder].append(self.alpha_q[bidder])
+
                 res = (
                     self.best_response_threaded(bidder)
                     if self.threaded
@@ -301,24 +307,31 @@ class Simulation:
 
                 # Utility increased by more than epsilon
                 if res.new_utility > res.old_utility + self.epsilon:
-                    util[bidder].append(res.new_utility)
-                    util_diff[bidder].append(res.new_utility - res.old_utility)
+                    if self.stats:
+                        self.stats["util"][bidder].append(res.new_utility)
                     utility_change = True
                     self.alpha_q[bidder] = res.new_alpha_q
                 else:
-                    util[bidder].append(res.old_utility)
-                    util_diff[bidder].append(0)
+                    if self.stats:
+                        self.stats["util"][bidder].append(res.old_utility)
+
+                if on_best_response:
+                    on_best_response(self, res)
 
             # PNE found
             if not utility_change:
-                stats["time"] = perf_counter() - start_time
-                return PNE(iteration, self.allocate(), stats=stats)
+                if self.stats:
+                    self.stats["time"] = perf_counter() - self.stats["time"]
+                self.executor.shutdown()
+                return PNE(iteration, self.allocate(), stats=self.stats or dict())
 
             # Cycle detection
             t = tuple(self.alpha_q)
             if t in seen:
-                stats["time"] = perf_counter() - start_time
-                return Cycle(iteration, stats=stats)
+                if self.stats:
+                    self.stats["time"] = perf_counter() - self.stats["time"]
+                self.executor.shutdown()
+                return Cycle(iteration, stats=self.stats or dict())
             seen.add(t)
 
             iteration += 1

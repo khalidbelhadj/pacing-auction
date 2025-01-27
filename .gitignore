@@ -3,8 +3,9 @@ __pycache__/
 .vscode/
 .venv*
 data/*
+.mypy_cache/
+.ropeproject/
+.ipynb_checkpoints/
+.pytest_cache/
 .DS_Store
-.pytest_cache
 playground.ipynb
-.mypy_cache
-.ropeproject
