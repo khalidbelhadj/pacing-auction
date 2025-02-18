@@ -1,18 +1,16 @@
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import logging.handlers
-import queue
+import threading
+import time
 
-from honours_project.data import BestResponse, SimulationResult
+import pandas as pd
+
+from honours_project.data import SimulationResult
 from honours_project.simulation import Simulation
 import logging
-import matplotlib.pyplot as plt
-import numpy as np
 
 logger = logging.getLogger("main")
 logging.basicConfig(level=logging.INFO)
-
-log_queue: queue.Queue[int] = queue.Queue(-1)
-queue_handler = logging.handlers.QueueHandler(log_queue)
-logger.addHandler(queue_handler)
 
 
 def print_result(sim: Simulation, res: SimulationResult):
@@ -22,29 +20,50 @@ def print_result(sim: Simulation, res: SimulationResult):
     print(f"Time per Iteration: {1000 * round(res.stats["time"] / res.iteration, 4)}ms")
 
 
+def run_sim(n, m, number_of_simulations):
+    result = []
+    for _ in range(number_of_simulations):
+        sim = Simulation(n, m, collect_stats=True)
+        res = sim.run()
+        result.append((sim.n, sim.m, res))
+    return result
+
+
+def collect():
+    ns = [10]
+    ms = range(1, 21)
+    number_of_simulations = 10
+
+    start_time = time.time()
+
+    results_lock = threading.Lock()
+
+    futures = []
+    executor = ProcessPoolExecutor()
+
+    for n in ns:
+        for m in ms:
+            futures.append(executor.submit(run_sim, n, m, number_of_simulations))
+
+    for future in as_completed(futures):
+        with results_lock:
+            res = future.result()
+
+            first = res[0]
+            logger.info(
+                f"Finished {first[0]}, {first[1]} in {time.time() - start_time:.2f}s"
+            )
+
+            data = [(n, m, r.iteration) for n, m, r in res]
+            df = pd.DataFrame(data, columns=["n", "m", "result"])
+
+            file_name = f"data/results-{time.strftime('%Y-%m-%d-%H-%M')}.csv"
+            df.to_csv(file_name, mode="a", header=False, index=False)
+
+
 def main() -> None:
-    sim = Simulation(5, 5, collect_stats=True)
-
-    cont = False
-
-    def on_best_response(s: Simulation, res: BestResponse):
-        nonlocal cont
-        logger.info(f"Best Response: {res}")
-        if cont:
-            return
-
-        command = input()
-        if command == "c":
-            cont = True
-
-    res = sim.run(on_best_response)
-    print_result(sim, res)
+    collect()
 
 
 if __name__ == "__main__":
-    listener = logging.handlers.QueueListener(log_queue)
-    listener.start()
-    try:
-        main()
-    finally:
-        listener.stop()
+    main()

@@ -169,7 +169,6 @@ class Simulation:
                     utility += self.v[main_bidder][auction] - winning_bid / len(
                         winning_bidders
                     )
-
         return utility
 
     def utility(self, bidder: int, new_alpha_q: Optional[int] = None) -> float:
@@ -267,10 +266,7 @@ class Simulation:
 
         return BestResponse(bidder, max_alpha_q, max_util, curr_util)
 
-    def run(
-        self,
-        on_best_response: Optional[Callable[["Simulation", BestResponse], None]] = None,
-    ) -> SimulationResult:
+    def run(self) -> SimulationResult:
         """
         Run the simulation until a PNE or cycle is found
         """
@@ -314,9 +310,6 @@ class Simulation:
                 else:
                     if self.stats:
                         self.stats["util"][bidder].append(res.old_utility)
-
-                if on_best_response:
-                    on_best_response(self, res)
 
             # PNE found
             if not utility_change:
