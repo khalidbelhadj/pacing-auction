@@ -1,10 +1,14 @@
-[build-system]
-requires = ["setuptools>=75.8"]
-build-backend = "setuptools.build_meta"
-
-
 [project]
 name = "honours-project"
-version = "0.0.0"
-description = "Strategic auctioning simulation"
-authors = [{ name = "Khalid Belhadj", email = "khalidbelhadj124@gmail.com" }]
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "black[jupyter]>=25.1.0",
+    "ipykernel>=6.29.5",
+    # "jupyter>=1.1.1",
+    "matplotlib>=3.10.0",
+    "pandas>=2.2.3",
+    "pytest>=8.3.4",
+]

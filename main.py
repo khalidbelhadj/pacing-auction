@@ -5,15 +5,15 @@ import time
 
 import pandas as pd
 
-from honours_project.data import SimulationResult
-from honours_project.simulation import Simulation
+from honours_project.data import AuctionResult
+from honours_project.auction import Auction
 import logging
 
 logger = logging.getLogger("main")
 logging.basicConfig(level=logging.INFO)
 
 
-def print_result(sim: Simulation, res: SimulationResult):
+def print_result(sim: Auction, res: AuctionResult):
     print(f"Seed:               {sim.seed}")
     print(f"Result:             {type(res)}, {res.iteration}")
     print(f"Time:               {round(res.stats['time'], 2)}s")
@@ -23,16 +23,17 @@ def print_result(sim: Simulation, res: SimulationResult):
 def run_sim(n, m, number_of_simulations):
     result = []
     for _ in range(number_of_simulations):
-        sim = Simulation(n, m, collect_stats=True)
+        sim = Auction(n, m, collect_stats=True)
         res = sim.run()
+        print_result(sim, res)
         result.append((sim.n, sim.m, res))
     return result
 
 
 def collect():
-    ns = [10]
-    ms = range(1, 21)
-    number_of_simulations = 10
+    ns = [5]
+    ms = range(10, 20 + 1)
+    number_of_simulations = 1
 
     start_time = time.time()
 
@@ -62,7 +63,10 @@ def collect():
 
 
 def main() -> None:
-    collect()
+    # collect()
+    sim = Auction(7, 7, threaded=False)
+    res = sim.run()
+    print_result(sim, res)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import dataclasses
 from abc import ABC
 
 import json
-from typing import Any
+from typing import Any, Iterable, Protocol
 
 import numpy as np
 
@@ -17,18 +17,18 @@ class Allocation:
 
 
 @dataclass(frozen=True, slots=True)
-class SimulationResult(ABC):
+class AuctionResult(ABC):
     iteration: int
     stats: dict[str, Any] = field(kw_only=True, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
-class Cycle(SimulationResult):
+class Cycle(AuctionResult):
     pass
 
 
 @dataclass(frozen=True, slots=True)
-class PNE(SimulationResult):
+class PNE(AuctionResult):
     allocations: list[Allocation]
 
 
@@ -47,9 +47,39 @@ class FPAAllocation:
 @dataclass(frozen=True, slots=True)
 class BestResponse:
     bidder: int
-    new_alpha_q: float
+    new_alpha_q: int
     new_utility: float
     old_utility: float
+
+
+class Distribution(Protocol):
+    def sample(self) -> float: ...
+
+
+class Uniform:
+    def __init__(self, low: float, high: float):
+        self.low = low
+        self.high = high
+
+    def sample(self) -> float:
+        return np.random.uniform(self.low, self.high)
+
+
+class Gaussian:
+    def __init__(self, mean: float, std: float):
+        self.mean = mean
+        self.std = std
+
+    def sample(self) -> float:
+        return np.random.normal(self.mean, self.std)
+
+
+class Discrete:
+    def __init__(self, values: Iterable[float]):
+        self.values = values
+
+    def sample(self) -> float:
+        return np.random.choice(list(self.values))
 
 
 class EnhancedJSONEncoder(json.JSONEncoder):
