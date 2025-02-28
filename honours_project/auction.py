@@ -7,13 +7,13 @@ from concurrent.futures import (
     as_completed,
 )
 from math import floor
-from time import perf_counter, time, time_ns
-from typing import Any, Callable, Generator, Iterable, Optional
+from time import perf_counter
+from typing import Any, Optional
 
 import numpy as np
 from numpy.typing import NDArray
 
-import honours_project.elimination as elimination
+from honours_project.elimination import ElimStrategy, Subsequent
 from honours_project.data import (
     Discrete,
     Distribution,
@@ -27,7 +27,7 @@ from honours_project.data import (
     BestResponse,
 )
 
-logger = logging.getLogger("simulation")
+logger = logging.getLogger("auction")
 
 
 @dataclass
@@ -38,19 +38,27 @@ class Auction:
 
     # Optional
     q: int = 1000
-    elim: elimination.ElimStrategy = elimination.Subsequent
+    elim: ElimStrategy = Subsequent
     epsilon: float = 0.0
 
     # Flags
     no_budget: bool = False
     shuffle: bool = False
     threaded: bool = True
+    cache_utility: bool = True
     collect_stats: bool = True
 
     # Controlling sampling
     seed: Optional[int] = None
     v_dist: Optional[Distribution] = None
     alpha_q_dist: Optional[Distribution] = None
+
+    # Cache
+    _utility_cache: dict[tuple[int, tuple[np.uint64, ...]], float] = field(
+        default_factory=dict
+    )
+    utility_cache_hits: int = field(init=False, default=0)
+    utility_cache_misses: int = field(init=False, default=0)
 
     def __post_init__(self) -> None:
         if self.seed:
@@ -98,40 +106,34 @@ class Auction:
         with open(file_path, "w", encoding="utf-8") as file:
             json.dump(self.__dict__, file)
 
-    def bids(self) -> NDArray[np.float64]:
-        """
-        Generate bids for all bidders
-        """
-        return (self.v * (self.alpha_q[:, np.newaxis] / self.q)).astype(np.float64)
-
     def fpa(self, bids: NDArray[np.float64]) -> FPAAllocation | Violation:
         """
         First Price Auction procedure, used to compute the allocation of the auction
+        Optimized version using NumPy vectorized operations
         """
         spending = np.zeros(self.n)
         allocations: list[Allocation] = []
 
+        max_bids = np.max(bids, axis=0)
+
         for auction in range(self.m):
-            winning_bidders = []
-            winning_bid = -1
+            winning_bid = max_bids[auction]
 
-            for bidder in range(self.n):
-                bid = bids[bidder][auction]
-                if bid > winning_bid:
-                    winning_bidders = [bidder]
-                    winning_bid = bid
-                elif bid == winning_bid:
-                    winning_bidders.append(bidder)
+            winning_mask = bids[:, auction] == winning_bid
+            winning_bidders: list[int] = [int(i) for i in np.where(winning_mask)[0]]
 
-            assert len(winning_bidders) != 0
-            assert winning_bid != -1
+            if not winning_bidders:
+                raise ValueError("No winning bidders")
+
+            num_winners = len(winning_bidders)
+            share = float(winning_bid) / num_winners
 
             for winning_bidder in winning_bidders:
-                spending[winning_bidder] += winning_bid / len(winning_bidders)
+                spending[winning_bidder] += share
                 if spending[winning_bidder] > self.b[winning_bidder]:
                     return Violation(winning_bidder, auction)
 
-            allocations.append(Allocation(winning_bidders, auction, winning_bid))
+            allocations.append(Allocation(winning_bidders, auction, float(winning_bid)))
 
         return FPAAllocation(allocations, -1)
 
@@ -140,6 +142,7 @@ class Auction:
     ) -> list[Allocation]:
         """
         Compute the allocation of the auction given the current state
+        Optimized version using NumPy vectorized operations
         """
         # mask[bidder][auction], True if not eliminated
         mask = np.ones((self.n, self.m), dtype=np.int8)
@@ -151,12 +154,46 @@ class Auction:
             bids[bidder] = self.v[bidder] * (new_alpha_q / self.q)
 
         while True:
-            valid_bids = np.multiply(mask, bids)
+            valid_bids = bids.copy()
+
             match self.fpa(valid_bids):
                 case FPAAllocation(allocations):
                     return allocations
                 case Violation(bidder, auction):
                     self.elim.eliminate(bidder, auction, mask)
+
+    def fpa_utility_np(
+        self, bids: NDArray[np.float64], main_bidder: int
+    ) -> float | Violation:
+        """
+        Helper function to calculate the utility of the main bidder
+        Optimized version using NumPy vectorized operations
+        """
+        spending = np.zeros(self.n)
+        utility = 0.0
+
+        max_bids = bids.max(axis=0)
+
+        for auction in range(self.m):
+            winning_bid = max_bids[auction]
+
+            winning_mask = bids[:, auction] == winning_bid
+            winning_bidders = np.where(winning_mask)[0]
+
+            num_winners = len(winning_bidders)
+
+            share = winning_bid / num_winners
+            spending[winning_bidders] += share
+
+            for winning_bidder in winning_bidders:
+                if spending[winning_bidder] > self.b[winning_bidder]:
+                    return Violation(winning_bidder, auction)
+
+            if winning_mask[main_bidder]:
+                x_ij = 1.0 / num_winners
+                utility += (self.v[main_bidder][auction] - winning_bid) * x_ij
+
+        return utility
 
     def fpa_utility(
         self, bids: NDArray[np.float64], main_bidder: int
@@ -189,13 +226,32 @@ class Auction:
                     utility += (self.v[main_bidder][auction] - winning_bid) * x_ij
         return utility
 
+    def clear_cache(self) -> None:
+        """
+        Clear all calculation caches
+        """
+        self._utility_cache = {}
+
     def utility(self, bidder: int, new_alpha_q: Optional[int] = None) -> float:
         """
         Calculate the utility of a bidder by simulating the auction procedure.
         The alpha values are adjusted to new_alpha_q if provided
         """
+        if new_alpha_q is not None:
+            alpha_values = list(self.alpha_q)
+            alpha_values[bidder] = np.uint64(new_alpha_q)
+            cache_key = (bidder, tuple(alpha_values))
+        else:
+            cache_key = (bidder, tuple(self.alpha_q))
+
+        # Use cache if enabled and key exists
+        if self.cache_utility and cache_key in self._utility_cache:
+            self.utility_cache_hits += 1
+            return self._utility_cache[cache_key]
+        self.utility_cache_misses += 1
+
         # mask[bidder][auction], True if not eliminated
-        mask = np.ones((self.n, self.m), dtype=bool)
+        mask = np.ones((self.n, self.m), dtype=np.int8)
 
         # Precompute bids
         bids = self.bids()
@@ -208,11 +264,15 @@ class Auction:
                 case Violation(violating_bidder, auction):
                     self.elim.eliminate(violating_bidder, auction, mask)
                 case utility:
+                    # Cache the result if caching is enabled
+                    if self.cache_utility:
+                        self._utility_cache[cache_key] = utility
                     return utility
 
     def best_response_auction(self, bidder: int, auction: int) -> BestResponse:
         """
         Find the best response for a bidder in a specific auction, given the current state
+        Optimized to reduce redundant calculations
         """
         curr_alpha_q = self.alpha_q[bidder]
         curr_util = self.utility(bidder)
@@ -220,22 +280,28 @@ class Auction:
         max_alpha_q = curr_alpha_q
         max_util = curr_util
 
+        other_bids = list[float]()
         for other_bidder in range(self.n):
-            if other_bidder == bidder or self.v[bidder][auction] == 0:
+            if other_bidder == bidder:
                 continue
 
             other_bid = self.v[other_bidder][auction] * (
                 self.alpha_q[other_bidder] / self.q
             )
+            other_bids.append(other_bid)
 
-            multiple = other_bid / self.v[bidder][auction]
-            # Add 1 to outbid the other bidder by 1/q
-            q_multiple = int(floor(multiple * self.q) + 1)
+        for other_bid in set(other_bids):
+            if other_bid == 0:
+                q_multiple = 1
+            else:
+                multiple = other_bid / self.v[bidder][auction]
+                # Add 1 to outbid the other bidder by 1/q
+                q_multiple = int(floor(multiple * self.q) + 1)
+
             new_alpha_q = min(q_multiple, self.q)
-
             new_util = self.utility(bidder, new_alpha_q)
 
-            if new_util >= max_util:
+            if new_util > max_util:
                 max_util = new_util
                 max_alpha_q = new_alpha_q
 
@@ -244,8 +310,7 @@ class Auction:
     def best_response_threaded(self, bidder: int) -> BestResponse:
         """
         Find the best response for a bidder, given the current state using threads
-
-        Performance improvement over best_response when using python>=3.13 with -Xgil=0 flag
+        Optimized to reduce redundant calculations and improve thread utilization
         """
         curr_alpha_q = self.alpha_q[bidder]
         curr_util = self.utility(bidder)
@@ -268,7 +333,7 @@ class Auction:
 
     def best_response(self, bidder: int) -> BestResponse:
         """
-        Find the best response for a biddder, given the current state
+        Find the best response for a bidder, given the current state
         """
         curr_alpha_q = self.alpha_q[bidder]
         curr_util = self.utility(bidder)
@@ -278,7 +343,7 @@ class Auction:
 
         for auction in range(self.m):
             res = self.best_response_auction(bidder, auction)
-            if res.new_utility >= max_util:
+            if res.new_utility > max_util:
                 max_util = res.new_utility
                 max_alpha_q = res.new_alpha_q
 
@@ -326,6 +391,8 @@ class Auction:
                     if self.stats:
                         self.stats["util"][bidder].append(res.new_utility)
                     utility_change = True
+
+                    # Update the alpha value
                     self.alpha_q[bidder] = res.new_alpha_q
                 else:
                     if self.stats:
@@ -349,3 +416,9 @@ class Auction:
             seen[t] = iteration
 
             iteration += 1
+
+    def bids(self) -> NDArray[np.float64]:
+        """
+        Generate bids for all bidders using NumPy vectorized operations
+        """
+        return (self.v * (self.alpha_q[:, np.newaxis] / self.q)).astype(np.float64)

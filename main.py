@@ -63,10 +63,18 @@ def collect():
 
 
 def main() -> None:
-    # collect()
-    sim = Auction(7, 7, threaded=False)
+    print("started")
+    sim = Auction(
+        10,
+        10,
+        threaded=True,
+        no_budget=True,
+        seed=741714086,
+        cache_utility=True,
+    )
     res = sim.run()
     print_result(sim, res)
+    print(sim.utility_cache_hits / (sim.utility_cache_hits + sim.utility_cache_misses))
 
 
 if __name__ == "__main__":
