@@ -5,8 +5,8 @@ import time
 
 import pandas as pd
 
-from honours_project.data import AuctionResult
-from honours_project.auction import Auction
+from pacing_auction.data import AuctionResult
+from pacing_auction.auction import Auction
 import logging
 
 logger = logging.getLogger("main")
@@ -24,7 +24,7 @@ def run_sim(n, m, number_of_simulations):
     result = []
     for _ in range(number_of_simulations):
         sim = Auction(n, m, collect_stats=True)
-        res = sim.run()
+        res = sim.responses()
         print_result(sim, res)
         result.append((sim.n, sim.m, res))
     return result
@@ -72,9 +72,12 @@ def main() -> None:
         seed=741714086,
         cache_utility=True,
     )
-    res = sim.run()
+    res = sim.responses()
     print_result(sim, res)
-    print(sim.utility_cache_hits / (sim.utility_cache_hits + sim.utility_cache_misses))
+    print(
+        sim.stats["utility_cache_hits"]
+        / (sim.stats["utility_cache_hits"] + sim.stats["utility_cache_misses"])
+    )
 
 
 if __name__ == "__main__":

@@ -24,9 +24,3 @@ class Current(ElimStrategy):
     @staticmethod
     def eliminate(bidder: int, auction: int, mask: NDArray[np.int8]) -> None:
         mask[bidder, auction] = 0
-
-
-class Remove(ElimStrategy):
-    @staticmethod
-    def eliminate(bidder: int, auction: int, mask: NDArray[np.int8]) -> None:
-        mask[bidder, :] = -np.inf
