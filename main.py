@@ -5,7 +5,7 @@ import time
 
 import pandas as pd
 
-from pacing_auction.data import AuctionResult
+from pacing_auction.data import BRDResult
 from pacing_auction.auction import Auction
 import logging
 
@@ -13,7 +13,7 @@ logger = logging.getLogger("main")
 logging.basicConfig(level=logging.INFO)
 
 
-def print_result(sim: Auction, res: AuctionResult):
+def print_result(sim: Auction, res: BRDResult):
     print(f"Seed:               {sim.seed}")
     print(f"Result:             {type(res)}, {res.iteration}")
     print(f"Time:               {round(res.stats['time'], 2)}s")

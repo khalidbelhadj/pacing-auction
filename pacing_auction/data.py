@@ -11,41 +11,60 @@ import numpy as np
 
 @dataclass(frozen=True, slots=True)
 class Allocation:
+    """
+    Allocation of a bidder to an auction
+    """
+
     bidders: list[int]
     auction: int
     price: float  # Total price paid by all bidders
 
 
 @dataclass(frozen=True, slots=True)
-class AuctionResult(ABC):
+class BRDResult(ABC):
+    """
+    Base class for Best-Response Dynamics results
+    """
+
     iteration: int
     stats: dict[str, Any] = field(kw_only=True, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
-class Cycle(AuctionResult):
+class Cycle(BRDResult):
+    """
+    Cycle state in BRD
+    """
+
     pass
 
 
 @dataclass(frozen=True, slots=True)
-class PNE(AuctionResult):
+class PNE(BRDResult):
+    """ "
+    Pure Nash Equilibrium state in BRD
+    """
+
     allocations: list[Allocation]
 
 
 @dataclass(frozen=True, slots=True)
 class Violation:
+    """
+    Violation of budgets for a bidder in an auction
+    """
+
     bidder: int
     auction: int
 
 
 @dataclass(frozen=True, slots=True)
-class FPAAllocation:
-    allocations: list[Allocation]
-    utility: float
-
-
-@dataclass(frozen=True, slots=True)
 class BestResponse:
+    """
+    Best response of a bidder in an auction.
+    The new alpha_q is provided as well as the new utility and the old utility.
+    """
+
     bidder: int
     new_alpha_q: int
     new_utility: float
@@ -53,10 +72,22 @@ class BestResponse:
 
 
 class Distribution(Protocol):
+    """
+    Basic probability distribution interface
+    """
+
     def sample(self) -> float: ...
 
 
 class Uniform:
+    """
+    Uniform distribution
+
+    Parameters:
+        low: float
+        high: float
+    """
+
     def __init__(self, low: float, high: float):
         self.low = low
         self.high = high
@@ -66,6 +97,14 @@ class Uniform:
 
 
 class Gaussian:
+    """
+    Gaussian distribution
+
+    Parameters:
+        mean: float
+        std: float
+    """
+
     def __init__(self, mean: float, std: float):
         self.mean = mean
         self.std = std
@@ -75,6 +114,14 @@ class Gaussian:
 
 
 class Discrete:
+    """
+    Discrete distribution
+    Chooses from a list of value with equal probability
+
+    Parameters:
+        values: Iterable[float]
+    """
+
     def __init__(self, values: Iterable[float]):
         self.values = values
 
