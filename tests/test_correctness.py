@@ -11,26 +11,26 @@ def test_dominant_player():
     Single dominant player with the highest budget and valuation for all auctions
     """
     sim = Auction(5, 5)
-    sim.v = np.full((5, 5), 0.0009)  # TODO: why < 0.0009??
+    sim.q = 1000
+    sim.v = np.full((5, 5), 0.0)  # TODO: why < 0.0009??
     sim.v[0] = np.full((1, 5), 1.0)
     sim.b[0] = float("inf")
 
     result = sim.responses()
     assert isinstance(result, PNE)
-    assert all(a.bidders == [0] for a in result.allocations)
+    assert set(result.x[0]) == {1.0}
+    assert set(result.x[1:].flatten()) == {0.0}
+    assert set(result.p) == {1 / sim.q}
 
 
 def test_pne_nonexistence():
     """
     Non-existence of PNE, even with 2 bidders and 2 auctions
     """
-    sim = Auction(2, 2, no_budget=True)
-    sim.v[0] = np.array([1.0, 1.0])
-    sim.v[1] = np.array([3 / 4, 0])
-
-    sim.alpha_q[0] = 1
-    sim.alpha_q[1] = 1
-
+    n, m = 2, 2
+    sim = Auction(n, m, no_budget=True)
+    sim.v = np.array([[1.0, 0.0], [0.0, 1.0]])
+    sim.alpha_q = np.array([1, 1])
     result = sim.responses()
     assert isinstance(result, Cycle)
 
@@ -39,31 +39,35 @@ def test_separate_preferences():
     """
     Each bidder has a strong preference to a separate item
     """
-    sim = Auction(5, 5, no_budget=True)
-    sim.v = np.full((5, 5), 0.0)
-    for bidder in range(5):
+    n, m = 5, 5
+    q = 1000
+    sim = Auction(n, m, q=q, no_budget=True)
+    sim.v = np.full((n, m), 0.0)
+    for bidder in range(n):
         sim.v[bidder][bidder] = 1.0
 
     result = sim.responses()
     assert isinstance(result, PNE)
-    assert all(
-        i in a.bidders and a.auction == i and a.price == 1 / sim.q
-        for i, a in enumerate(result.allocations)
-    )
+    x, p = result.x, result.p
+    assert np.allclose(np.identity(n), x)
+    assert np.allclose(p, 1 / q)
 
 
 def test_tie():
     """
     A tie between all bidders
     """
-    sim = Auction(5, 5, no_budget=True)
-    sim.v = np.full((5, 5), 0.5)
-    sim.alpha_q = np.full(5, sim.q)
+    n, m = 5, 5
+    value = 0.5
+    sim = Auction(n, m, no_budget=True)
+    sim.v = np.full((n, m), value)
+    sim.alpha_q = np.full(n, sim.q)
 
     result = sim.responses()
     assert isinstance(result, PNE)
-    assert all([set(a.bidders) == set(range(0, 5)) for a in result.allocations])
-    assert all([a.price == 0.5 for a in result.allocations])
+    x, p = result.x, result.p
+    assert set(x.flatten()) == {1 / n}
+    assert np.allclose(p, value)
 
 
 def test_all_eliminated():

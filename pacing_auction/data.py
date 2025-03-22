@@ -8,6 +8,8 @@ from typing import Any, Iterable, Protocol
 
 import numpy as np
 
+from numpy.typing import NDArray
+
 
 @dataclass(frozen=True, slots=True)
 class Allocation:
@@ -45,7 +47,8 @@ class PNE(BRDResult):
     Pure Nash Equilibrium state in BRD
     """
 
-    allocations: list[Allocation]
+    x: NDArray[np.float64]
+    p: NDArray[np.float64]
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +130,38 @@ class Discrete:
 
     def sample(self) -> float:
         return np.random.choice(list(self.values))
+
+
+class LogNormal:
+    """
+    Log-normal distribution
+
+    Parameters:
+        mean: float
+        std: float
+    """
+
+    def __init__(self, mean: float, std: float):
+        self.mean = mean
+        self.std = std
+
+    def sample(self) -> float:
+        return np.random.lognormal(self.mean, self.std)
+
+
+class Pareto:
+    """
+    Pareto distribution
+
+    Parameters:
+        alpha: float
+    """
+
+    def __init__(self, alpha: float):
+        self.alpha = alpha
+
+    def sample(self) -> float:
+        return np.random.pareto(self.alpha)
 
 
 class EnhancedJSONEncoder(json.JSONEncoder):

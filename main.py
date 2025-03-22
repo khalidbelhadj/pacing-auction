@@ -3,6 +3,7 @@ import logging.handlers
 import threading
 import time
 
+from matplotlib import pyplot as plt
 import pandas as pd
 
 from pacing_auction.data import BRDResult
@@ -30,54 +31,19 @@ def run_sim(n, m, number_of_simulations):
     return result
 
 
-def collect():
-    ns = [5]
-    ms = range(10, 20 + 1)
-    number_of_simulations = 1
-
-    start_time = time.time()
-
-    results_lock = threading.Lock()
-
-    futures = []
-    executor = ProcessPoolExecutor()
-
-    for n in ns:
-        for m in ms:
-            futures.append(executor.submit(run_sim, n, m, number_of_simulations))
-
-    for future in as_completed(futures):
-        with results_lock:
-            res = future.result()
-
-            first = res[0]
-            logger.info(
-                f"Finished {first[0]}, {first[1]} in {time.time() - start_time:.2f}s"
-            )
-
-            data = [(n, m, r.iteration) for n, m, r in res]
-            df = pd.DataFrame(data, columns=["n", "m", "result"])
-
-            file_name = f"data/results-{time.strftime('%Y-%m-%d-%H-%M')}.csv"
-            df.to_csv(file_name, mode="a", header=False, index=False)
-
-
 def main() -> None:
-    print("started")
-    sim = Auction(
-        10,
-        10,
-        threaded=True,
-        no_budget=True,
-        seed=741714086,
-        cache_utility=True,
-    )
+    logger.info("Starting")
+    sim = Auction(5, 5, shuffle=True)
     res = sim.responses()
+
+    # social_welfare = res.stats["social_welfare"]
+    # liquid_welfare = res.stats["liquid_welfare"]
+
+    # plt.plot(social_welfare)
+    # plt.plot(liquid_welfare)
+    # plt.show()
+
     print_result(sim, res)
-    print(
-        sim.stats["utility_cache_hits"]
-        / (sim.stats["utility_cache_hits"] + sim.stats["utility_cache_misses"])
-    )
 
 
 if __name__ == "__main__":

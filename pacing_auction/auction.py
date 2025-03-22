@@ -2,13 +2,16 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import json
 import logging
+import multiprocessing
 import sys
 from concurrent.futures import (
     Future,
+    ProcessPoolExecutor,
     ThreadPoolExecutor,
     as_completed,
 )
 from math import floor
+import threading
 from time import perf_counter
 from typing import Any, Optional
 
@@ -23,6 +26,8 @@ from pacing_auction.data import (
     PNE,
     Cycle,
     Allocation,
+    Gaussian,
+    Pareto,
     Uniform,
     Violation,
     BestResponse,
@@ -61,8 +66,6 @@ class Auction:
             If True, randomize the order in which bidders update their strategies.
         threaded: bool = True
             If True, use multithreading for best response calculations.
-        cache_utility: bool = True
-            If True, cache utility calculations to improve performance.
         collect_stats: bool = True
             If True, collect statistics during the auction process.
 
@@ -95,7 +98,6 @@ class Auction:
     no_budget: bool = False
     shuffle: bool = False
     threaded: bool = True
-    cache_utility: bool = True
     collect_stats: bool = True
 
     # Controlling sampling
@@ -104,11 +106,8 @@ class Auction:
     b_scaling_dist: Optional[Distribution] = None
     alpha_q_dist: Optional[Distribution] = None
 
-    # Stats and Cache
+    # Stats
     stats: dict[str, Any] = field(default_factory=dict, init=False)
-    _utility_cache: dict[tuple[int, tuple[np.uint64, ...]], float] = field(
-        default_factory=dict
-    )
 
     def __post_init__(self) -> None:
         if self.seed:
@@ -117,23 +116,24 @@ class Auction:
             self.seed = np.random.get_state()[1][0]  # type: ignore
 
         # v[bidder][auction] is the valuation of `bidder` for `auction`
-        v_dist = self.v_dist or Uniform(0, 1)
+        v_dist = self.v_dist or Pareto(self.n)
         self.v = np.array(
             [[v_dist.sample() for _ in range(self.m)] for _ in range(self.n)]
         )
 
         # budget[bidder] is the budget of `bidder`
-        total_v = np.sum(self.v, axis=0)
-        b_scaling = np.ones(self.n)
-        b_scaling_dist = self.b_scaling_dist or Uniform(1 / self.m, 1)
+        total_v: NDArray[np.float64] = np.sum(self.v, axis=1)
+
+        b_scaling: NDArray[np.float64] = np.full(self.n, np.inf)
+        b_scaling_dist = self.b_scaling_dist or Gaussian(1 / self.m, 1)
         if not self.no_budget:
             b_scaling = np.array([b_scaling_dist.sample() for _ in range(self.n)])
 
         self.b = total_v * b_scaling
 
         # alpha[bidder], multiples of q
-        alpha_q_dist = self.alpha_q_dist or Discrete((self.q - 1,))
-        self.alpha_q = np.array([alpha_q_dist.sample() for _ in range(self.n)])
+        alpha_q_dist = self.alpha_q_dist or Discrete((self.q,))
+        self.alpha_q = np.array([int(alpha_q_dist.sample()) for _ in range(self.n)])
 
         self.init_stats()
 
@@ -142,16 +142,12 @@ class Auction:
         Initialise the stats dictionary
         """
         self.stats = {
-            "v": self.v.tolist(),
-            "b": self.b.tolist(),
-            "alpha_q": self.alpha_q.tolist(),
-            "util": [list[float]() for _ in range(self.n)],
-            "alphas": [list[float]() for _ in range(self.n)],
+            "utility": [list[float]() for _ in range(self.n)],
+            "alpha_q": [list[float]() for _ in range(self.n)],
             "time": perf_counter(),
-            "utility_cache_hits": 0,
-            "utility_cache_misses": 0,
             "auction_count": 0,
             "social_welfare": list[float](),
+            "liquid_welfare": list[float](),
         }
 
     @classmethod
@@ -196,7 +192,9 @@ class Auction:
         """
         return (self.v * (self.alpha_q[:, np.newaxis] / self.q)).astype(np.float64)
 
-    def fpa_allocate(self, bids: NDArray[np.float64]) -> list[Allocation] | Violation:
+    def fpa_allocate(
+        self, bids: NDArray[np.float64]
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | Violation:
         """
         First Price Auction procedure, used to compute the allocation of the auction
         Returns a list of allocations or a Violation if a bidder is over budget
@@ -210,82 +208,13 @@ class Auction:
             The allocation of the auction or a violation if a bidder is over budget
         """
         spending = np.zeros(self.n)
-        allocations: list[Allocation] = []
 
-        max_bids = np.max(bids, axis=0)
-
-        for auction in range(self.m):
-            winning_bid = max_bids[auction]
-
-            winning_mask = bids[:, auction] == winning_bid
-            winning_bidders: list[int] = [int(i) for i in np.where(winning_mask)[0]]
-
-            if not winning_bidders:
-                raise ValueError("No winning bidders")
-
-            num_winners = len(winning_bidders)
-            share = float(winning_bid) / num_winners
-
-            for winning_bidder in winning_bidders:
-                spending[winning_bidder] += share
-                if spending[winning_bidder] > self.b[winning_bidder]:
-                    return Violation(winning_bidder, auction)
-
-            allocations.append(Allocation(winning_bidders, auction, float(winning_bid)))
-
-        return allocations
-
-    def allocate(
-        self, adjustment: Optional[tuple[int, float]] = None
-    ) -> list[Allocation]:
-        """
-        Compute the allocation of the auction given the current state
-
-        Parameters:
-            adjustment: Optional[tuple[int, float]] = None
-                The adjustment to the alpha values for a bidder
-
-        Returns:
-            list[Allocation]
-            The allocation of the auction
-        """
-        mask = np.ones((self.n, self.m), dtype=np.int8)
-
-        # Precompute bids
-        bids = self.bids()
-        if adjustment is not None:
-            bidder, new_alpha_q = adjustment
-            bids[bidder] = self.v[bidder] * (new_alpha_q / self.q)
-
-        while True:
-            valid_bids = bids.copy()
-
-            match self.fpa_allocate(valid_bids):
-                case Violation(bidder, auction):
-                    self.elim.eliminate(bidder, auction, mask)
-                case allocations:
-                    return allocations
-
-    def fpa_utility(
-        self, bids: NDArray[np.float64], main_bidder: int
-    ) -> float | Violation:
-        """
-        Helper function, sub-procedure of `utility`
-        Computes the utility of a bidder, but returns a Violation if a bidder is over budget
-
-        Parameters:
-            bids: NDArray[np.float64]
-                The bids for all bidders as a NumPy matrix of shape (n, m)
-                We provide these as an argument as they might be adjusted or precomputed
-            main_bidder: int
-                The index of the bidder to calculate the utility for
-        """
-        spending = np.zeros(self.n)
-        utility = 0
+        x: NDArray[np.float64] = np.zeros((self.n, self.m))
+        p: NDArray[np.float64] = np.zeros(self.m)
 
         for auction in range(self.m):
-            winning_bidders = []
-            winning_bid = -1
+            winning_bidders: list[int] = []
+            winning_bid = -1.0
 
             for bidder in range(self.n):
                 bid = bids[bidder][auction]
@@ -296,64 +225,46 @@ class Auction:
                     winning_bidders.append(bidder)
 
             for winning_bidder in winning_bidders:
-                spending[winning_bidder] += winning_bid / len(winning_bidders)
+                x_ij = 1 / len(winning_bidders)
+                spending[winning_bidder] += winning_bid * x_ij
                 if spending[winning_bidder] > self.b[winning_bidder]:
                     return Violation(winning_bidder, auction)
 
-                if winning_bidder == main_bidder:
-                    x_ij = 1 / len(winning_bidders)
-                    utility += (self.v[main_bidder][auction] - winning_bid) * x_ij
-        return utility
+                x[winning_bidder][auction] = x_ij
 
-    def utility(self, bidder: int, new_alpha_q: Optional[int] = None) -> float:
+            p[auction] = winning_bid
+
+        return x, p
+
+    def allocate(
+        self, adjustment: Optional[tuple[int, int]] = None
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """
-        Calculate the utility of a bidder by simulating the auction procedure.
-        The alpha values are adjusted to new_alpha_q if provided
+        Compute the allocation of the auction given the current state
 
         Parameters:
-            bidder: int
-                The index of the bidder to calculate the utility for
-            new_alpha_q: Optional[int] = None
-                The new alpha value to use for the bidder
+            adjustment: Optional[tuple[int, float]] = None
+                The adjustment to the alpha values for a bidder
 
         Returns:
-            float
-            The utility of the bidder
+            tuple[NDArray[np.float64], NDArray[np.float64]]
+            The tuple of prices and allocations for the auction
         """
-        if new_alpha_q is not None:
-            alpha_values = list(self.alpha_q)
-            alpha_values[bidder] = np.uint64(new_alpha_q)
-            cache_key = (bidder, tuple(alpha_values))
-        else:
-            cache_key = (bidder, tuple(self.alpha_q))
-
-        # Use cache if enabled and key exists
-        if self.cache_utility and cache_key in self._utility_cache:
-            if self.collect_stats:
-                self.stats["utility_cache_hits"] += 1
-            return self._utility_cache[cache_key]
-
-        if self.collect_stats:
-            self.stats["utility_cache_misses"] += 1
-
-        # mask[bidder][auction], True if not eliminated
         mask = np.ones((self.n, self.m), dtype=np.int8)
 
         # Precompute bids
         bids = self.bids()
-        if new_alpha_q is not None:
+        if adjustment is not None:
+            bidder, new_alpha_q = adjustment
             bids[bidder] = self.v[bidder] * (new_alpha_q / self.q)
 
         while True:
             valid_bids = np.multiply(mask, bids)
-            match self.fpa_utility(valid_bids, bidder):
-                case Violation(violating_bidder, auction):
-                    self.elim.eliminate(violating_bidder, auction, mask)
-                case utility:
-                    # Cache the result if caching is enabled
-                    if self.cache_utility:
-                        self._utility_cache[cache_key] = utility
-                    return utility
+            match self.fpa_allocate(valid_bids):
+                case Violation(bidder, auction):
+                    self.elim.eliminate(bidder, auction, mask)
+                case x, p:
+                    return x, p
 
     def response_candidates(self, bidder: int) -> set[int]:
         """
@@ -383,6 +294,70 @@ class Auction:
                 new_alpha_qs.add(new_alpha_q)
         return new_alpha_qs
 
+    def value(
+        self, x: NDArray[np.float64], p: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
+        """
+        Calculate the value of each bidder given the allocation and prices
+
+        Parameters:
+            x: NDArray[np.float64]
+                The allocation for each bidder and auction (n x m)
+            p: NDArray[np.float64]
+                The prices of the auctions (m)
+        Returns:
+            NDArray[np.float64]
+            The value vector
+        """
+        return np.sum(np.multiply(self.v, x), axis=1)
+
+    def utility(
+        self, x: NDArray[np.float64], p: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
+        """
+        Calculate the utility of each bidder given the allocation and prices
+
+        Parameters:
+            x: NDArray[np.float64]
+                The allocation for each bidder and auction (n x m)
+            p: NDArray[np.float64]
+                The prices of the auctions (m)
+        Returns:
+            NDArray[np.float64]
+            The utility vector
+        """
+        return np.sum(np.multiply(np.subtract(self.v, p), x), axis=1)
+
+    def social_welfare(self, x: NDArray[np.float64], p: NDArray[np.float64]) -> float:
+        """
+        Calculate the social welfare of the auction given the allocation and prices
+
+        Parameters:
+            p: NDArray[np.float64]
+                The prices of the auctions (m)
+            x: NDArray[np.float64]
+                The allocation for each bidder and auction (n x m)
+        Returns:
+            float
+            The social welfare of the auction
+        """
+        return np.sum(np.multiply(self.v, x))
+
+    def liquid_welfare(self, x: NDArray[np.float64], p: NDArray[np.float64]) -> float:
+        """
+        Calculate the liquid welfare of the auction given the allocation and prices
+
+        Parameters:
+            p: NDArray[np.float64]
+                The prices of the auctions (m)
+            x: NDArray[np.float64]
+                The allocation for each bidder and auction (n x m)
+        Returns:
+            float
+            The liquid welfare of the auction
+        """
+        return np.sum(np.minimum(self.b, np.sum(np.multiply(self.v, x), axis=1)))
+
     def best_response_threaded(self, bidder: int) -> BestResponse:
         """
         Find the best response for a bidder, given the current state using threads
@@ -396,7 +371,8 @@ class Auction:
             The best response for the bidder
         """
         curr_alpha_q = self.alpha_q[bidder]
-        curr_util = self.utility(bidder)
+        initial_x, initial_p = self.allocate()
+        curr_util = self.utility(initial_x, initial_p)[bidder]
 
         max_util = curr_util
         max_alpha_q = curr_alpha_q
@@ -405,13 +381,17 @@ class Auction:
         futures: list[Future[tuple[int, float]]] = []
 
         for new_alpha_q in new_alpha_qs:
-            f = self.executor.submit(
-                lambda a, b: (a, self.utility(b, a)), new_alpha_q, bidder
-            )
-            futures.append(f)
 
-        for f in as_completed(futures):
-            new_alpha_q, new_utility = f.result()
+            def func(alpha_q: int, bidder: int) -> tuple[int, float]:
+                # return alpha_q, self.utility(*self.allocate((bidder, alpha_q)))[bidder]
+                x, p = self.allocate((bidder, alpha_q))
+                return alpha_q, self.utility(x, p)[bidder]
+
+            future = self.executor.submit(func, new_alpha_q, bidder)
+            futures.append(future)
+
+        for future in as_completed(futures):
+            new_alpha_q, new_utility = future.result()
             if new_utility > max_util:
                 max_util = new_utility
                 max_alpha_q = new_alpha_q
@@ -431,7 +411,7 @@ class Auction:
             The best response for the bidder
         """
         curr_alpha_q = self.alpha_q[bidder]
-        curr_util = self.utility(bidder)
+        curr_util = self.utility(*self.allocate())[bidder]
 
         max_alpha_q = curr_alpha_q
         max_util = curr_util
@@ -439,7 +419,7 @@ class Auction:
         new_alpha_qs = self.response_candidates(bidder)
 
         for new_alpha_q in new_alpha_qs:
-            new_utility = self.utility(bidder, new_alpha_q)
+            new_utility = self.utility(*self.allocate((bidder, new_alpha_q)))[bidder]
             if new_utility > max_util:
                 max_util = new_utility
                 max_alpha_q = new_alpha_q
@@ -480,14 +460,14 @@ class Auction:
             # Shuffle the order of bidders if shuffle is enabled
             if self.shuffle and len(order) > 1:
                 last_bidder = order[-1]
-                np.random.shuffle(order[:-1])
+                np.random.shuffle(order)
                 if order[0] == last_bidder:
                     swap_idx = np.random.randint(1, len(order))
                     order[0], order[swap_idx] = order[swap_idx], order[0]
 
             for bidder in order:
                 if self.stats:
-                    self.stats["alphas"][bidder].append(self.alpha_q[bidder])
+                    self.stats["alpha_q"][bidder].append(self.alpha_q[bidder])
 
                 res = (
                     self.best_response_threaded(bidder)
@@ -498,21 +478,29 @@ class Auction:
                 # Utility increased by more than epsilon
                 if res.new_utility > res.old_utility + self.epsilon:
                     if self.stats:
-                        self.stats["util"][bidder].append(res.new_utility)
+                        self.stats["utility"][bidder].append(res.new_utility)
                     utility_change = True
 
                     # Update the alpha value
                     self.alpha_q[bidder] = res.new_alpha_q
                 else:
                     if self.stats:
-                        self.stats["util"][bidder].append(res.old_utility)
+                        self.stats["utility"][bidder].append(res.old_utility)
+
+            if self.stats:
+                self.stats["social_welfare"].append(
+                    self.social_welfare(*self.allocate())
+                )
+                self.stats["liquid_welfare"].append(
+                    self.liquid_welfare(*self.allocate())
+                )
 
             # PNE found
             if not utility_change:
                 if self.stats:
                     self.stats["time"] = perf_counter() - self.stats["time"]
                 self.executor.shutdown(wait=True)
-                result = PNE(iteration, self.allocate(), stats=deepcopy(self.stats))
+                result = PNE(iteration, *self.allocate(), stats=deepcopy(self.stats))
                 # self.stats = dict()
                 return result
             # Cycle detection
@@ -528,3 +516,85 @@ class Auction:
             seen[t] = iteration
 
             iteration += 1
+
+
+def auctions(count: int, *args, **kwargs):
+    for _ in range(count):
+        yield Auction(*args, **kwargs)
+
+
+def responses(auction):
+    return auction.responses()
+
+
+def responses_with_retry(auction):
+    return auction.responses_with_retry()
+
+
+def collect(
+    results,
+    count: int,
+    *args,
+    on_complete=None,
+    break_cycles=False,
+    max_cycles=3,
+    alt_responses=3,
+    **kwargs,
+):
+    """
+    Collect the results of multiple auction simulations.
+
+    Parameters:
+        results: list
+            List to store the simulation results (BRDResult objects)
+        count: int
+            Number of auctions to run
+        *args
+            Positional arguments to pass to the Auction constructor
+        on_complete: Optional[Callable]
+            Callback function called after each auction completes
+            with signature (current_index, total_count, result)
+        break_cycles: bool = False
+            If True, attempts to break out of cycles by trying alternative responses
+        max_cycles: int = 3
+            Maximum number of cycles to try breaking out of before giving up
+        alt_responses: int = 3
+            Number of alternative responses to try for each bidder
+        **kwargs
+            Keyword arguments to pass to the Auction constructor
+
+    Returns:
+        list
+            The same results list that was passed in, now populated
+    """
+    i = 0
+    i_lock = threading.Lock()
+
+    with multiprocessing.Pool() as pool:
+        if break_cycles:
+            # Create a wrapper function to pass parameters to responses_with_retry
+            def responses_with_retry_params(auction):
+                return auction.responses_with_retry(
+                    max_cycles=max_cycles, alt_responses=alt_responses
+                )
+
+            # Use the wrapper function
+            for auction in auctions(count, *args, **kwargs):
+                result = responses_with_retry_params(auction)
+                with i_lock:
+                    i += 1
+                    if on_complete:
+                        on_complete(i, count, result)
+                results.append(result)
+        else:
+            # Use the standard multiprocessing approach for non-retry mode
+            for result in pool.imap_unordered(
+                responses, auctions(count, *args, **kwargs)
+            ):
+                with i_lock:
+                    i += 1
+                    if on_complete:
+                        on_complete(i, count, result)
+                results.append(result)
+
+    return results
