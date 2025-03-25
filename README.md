@@ -25,6 +25,7 @@ pacing_auction/              # Main package directory
 
 scripts/                     # Utility scripts
 ├── results.py               # Script for running comprehensive test suites
+└── example.py               # Example script for running a simple auction
 
 notebooks/                   # Jupyter notebooks for analysis and visualization
 
@@ -61,22 +62,23 @@ Below is a simple example of creating and running an auction simulation:
 
 ```python
 from pacing_auction.auction import Auction
+from pacing_auction.data import PNE, Cycle
 from pacing_auction.generator import CompleteAuctionGenerator
 
 # Create an auction with 3 bidders and 4 items
 auction = Auction(
-    n=3,                              # Number of bidders
-    m=4,                              # Number of items
-    q=1000,                           # Granularity of pacing multipliers
-    seed=42,                          # Random seed for reproducibility
-    generator=CompleteAuctionGenerator()  # Valuation generator
+    n=3,  # Number of bidders
+    m=4,  # Number of items
+    q=1000,  # Granularity of pacing multipliers
+    seed=42,  # Random seed for reproducibility
+    generator=CompleteAuctionGenerator(),  # Valuation generator
 )
 
 # Run best response dynamics to find PNE or cycle
 result = auction.responses()
 
 match result:
-    case PNE(iteration, x, p, stats):
+    case PNE(iteration, x, p, stats=stats):
         print(f"Found PNE in {result.iteration} iterations")
 
         # Calculate metrics
@@ -87,9 +89,11 @@ match result:
         print(f"Social welfare: {social_welfare}")
         print(f"Liquid welfare: {liquid_welfare}")
         print(f"Revenue: {revenue}")
-    case Cycle(iteration, stats):
+    case Cycle(iteration, stats=stats):
         print(f"Found cycle after {result.iteration} iterations")
         print(f"Cycle length: {result.stats['cycle_length']}")
+    case _:
+        pass
 ```
 
 ## Running Experiments
