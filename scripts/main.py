@@ -5,6 +5,12 @@ import time
 
 from matplotlib import pyplot as plt
 import pandas as pd
+import os
+import sys
+
+# Add project root to the Python path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+sys.path.insert(0, project_root)
 
 from pacing_auction.data import BRDResult
 from pacing_auction.auction import Auction

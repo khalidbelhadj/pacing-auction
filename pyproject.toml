@@ -12,5 +12,6 @@ dependencies = [
     "pandas>=2.2.3",
     "pytest>=8.3.5",
     "scipy>=1.15.2",
+    "scipy-stubs>=1.15.2.1",
     "seaborn>=0.13.2",
 ]

@@ -1,125 +1,132 @@
-# Pacing Auction Simulation
+# Pacing Auction Simulator
 
-2024-2025 honours project
+A Python framework for simulating and analysing first-price pacing auctions with budget constraints.
+
+## Project Overview
+
+This project implements a comprehensive simulator for first-price auctions where bidders have budget constraints and use pacing multipliers to scale down their bids. The simulator can find pure Nash equilibria (PNE) or cycles in bidder strategies.
+
+Key features:
+- Multiple auction generators (complete, sampled, correlated)
+- Various elimination strategies for bidders who violate budget constraints
+- Multithreaded best response dynamics for improved performance
+- Comprehensive metrics and statistics collection
+- Visualization tools for analysing results
 
 ## Project Structure
 
-### Module Descriptions
+```
+pacing_auction/              # Main package directory
+├── auction.py               # Core auction implementation
+├── data.py                  # Data classes and structures
+├── elimination.py           # Elimination strategies for budget violations
+├── generator.py             # Auction state generators
+└── __init__.py              # Package initialization
 
-- **auction.py**: Contains the main `Auction` class that implements:
-  - First Price Auction (FPA) mechanism
-  - Utility calculations with caching
-  - Best response computations (single-threaded and multi-threaded)
-  - PNE finding and cycle detection
-  - NumPy-optimized bid calculations
+scripts/                     # Utility scripts
+├── results.py               # Script for running comprehensive test suites
 
-- **data.py**: Defines core data structures:
-  - `Distribution` classes for value/alpha sampling
-  - Result types (`PNE`, `Cycle`, `Violation`)
-  - Allocation and Best Response data structures
+notebooks/                   # Jupyter notebooks for analysis and visualization
 
-- **elimination.py**: Implements strategies for handling budget violations:
-  - `ElimStrategy` base class
-  - Implementations of specific elimination strategies
-
-## Getting Started
-
-### Option 1: Traditional Python Virtual Environment
-
-```bash
-# Clone the repository
-git clone <repository-url>
-cd honours-project
-
-# Create and activate a virtual environment
-python -m venv venv
-
-# On Unix/macOS:
-source venv/bin/activate
-# On Windows:
-# venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
+tests/                       # Unit and integration tests
 ```
 
-### Option 2: Using uv (Recommended)
+## Installation
 
-[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver.
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/khalidbelhadj/pacing-auction.git
+   cd pacing-auction
+   ```
 
-```bash
-# Clone the repository
-git clone <repository-url>
-cd honours-project
+2. Create and activate a virtual environment (Python 3.13+ required):
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   ```
 
-# Run directly using uv
-uv run main.py
-```
+   or using uv
+   ```bash
+   uv sync
+   ```
 
-## Usage
+3. Install dependencies:
+   ```bash
+   pip install -e .
+   ```
+
+## Usage Example
+
+Below is a simple example of creating and running an auction simulation:
 
 ```python
-from honours_project.auction import Auction
+from pacing_auction.auction import Auction
+from pacing_auction.generator import CompleteAuctionGenerator
 
-# Create an auction with 3 bidders and 2 items
+# Create an auction with 3 bidders and 4 items
 auction = Auction(
-    n=3,  # number of bidders
-    m=2,  # number of items
+    n=3,                              # Number of bidders
+    m=4,                              # Number of items
+    q=1000,                           # Granularity of pacing multipliers
+    seed=42,                          # Random seed for reproducibility
+    generator=CompleteAuctionGenerator()  # Valuation generator
 )
 
-# Run the simulation
-result = auction.run()
+# Run best response dynamics to find PNE or cycle
+result = auction.responses()
+
+match result:
+    case PNE(iteration, x, p, stats):
+        print(f"Found PNE in {result.iteration} iterations")
+
+        # Calculate metrics
+        social_welfare = auction.social_welfare(x, p)
+        liquid_welfare = auction.liquid_welfare(x, p)
+        revenue = auction.revenue(x, p)
+
+        print(f"Social welfare: {social_welfare}")
+        print(f"Liquid welfare: {liquid_welfare}")
+        print(f"Revenue: {revenue}")
+    case Cycle(iteration, stats):
+        print(f"Found cycle after {result.iteration} iterations")
+        print(f"Cycle length: {result.stats['cycle_length']}")
 ```
 
-- **Core Parameters**:
-  - `n`: Number of bidders
-  - `m`: Number of items
-  - `q`: Discretization parameter (default: 1000)
-  - `epsilon`: Minimum utility improvement threshold
+## Running Experiments
 
-- **Performance Flags**:
-  - `threaded`: Enable multi-threaded best response computation
-  - `cache_utility`: Enable utility calculation caching
-  - `collect_stats`: Enable collection of simulation statistics
+The project includes a comprehensive test suite to evaluate auction behavior across different parameters:
 
-- **Sampling Control**:
-  - `seed`: Random seed for reproducibility
-  - `v_dist`: Custom distribution for item valuations
-  - `alpha_q_dist`: Custom distribution for alpha parameters
-
-## Advanced Features
-
-### Custom Value Distributions
-
-```python
-from honours_project.data import Uniform
-
-# Create auction with custom value distribution
-auction = Auction(
-    n=3,
-    m=2,
-    v_dist=Uniform(0, 10)  # Values between 0 and 10
-)
+```bash
+python scripts/results.py --min-n 2 --max-n 5 --min-m 2 --max-m 5 --runs 10
 ```
+use `--help` to look at other parameters
 
-### Performance Monitoring
+## Understanding the Code
 
-```python
-# Run with statistics collection
-auction = Auction(n=3, m=2, collect_stats=True)
-result = auction.run()
+### Auction Class
 
-# Access statistics
-print(f"Cache hits: {auction.utility_cache_hits}")
-print(f"Cache misses: {auction.utility_cache_misses}")
-print(f"Time taken: {result.stats['time']:.2f}s")
-```
+The core `Auction` class in `auction.py` implements the first-price pacing auction mechanism. It handles:
 
-### Save/Load Functionality
+- Bidder valuations and budget constraints
+- Pacing multipliers (alpha) for each bidder
+- Best response dynamics to find equilibria
+- Metrics calculation (social welfare, liquid welfare, revenue)
 
-```python
-# Save auction state
-auction.save("auction_state.json")
+### Auction Generators
 
-# Load auction state
-loaded_auction = Auction.load("auction_state.json")
+Different generators create various valuation matrices:
+
+- `CompleteAuctionGenerator`: Generates valuations with full competition
+- `SampledAuctionGenerator`: Generates sparse valuation matrices
+- `CorrelatedAuctionGenerator`: Generates valuations with controllable correlation
+
+### Elimination Strategies
+
+When bidders violate budget constraints, different elimination strategies can be applied:
+- `Subsequent`: Eliminate the bidder from the current and all subsequent auctions
+- `Current`: Eliminate the bidder only from the current auction
+- `All`: Eliminate the bidder from all auctions
+
+## License
+
+[MIT License](LICENSE)

@@ -29,7 +29,7 @@ def test_pne_nonexistence():
     """
     n, m = 2, 2
     sim = Auction(n, m, no_budget=True)
-    sim.v = np.array([[1.0, 0.0], [0.0, 1.0]])
+    sim.v = np.array([[3 / 4, 0.0], [1.0, 1.0]])
     sim.alpha_q = np.array([1, 1])
     result = sim.responses()
     assert isinstance(result, Cycle)

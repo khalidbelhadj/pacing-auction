@@ -8,4 +8,5 @@ data/*
 .ipynb_checkpoints/
 .pytest_cache/
 .DS_Store
-playground.ipynb
+results/*
+old/

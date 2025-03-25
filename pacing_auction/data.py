@@ -4,7 +4,7 @@ import dataclasses
 from abc import ABC
 
 import json
-from typing import Any, Iterable, Protocol
+from typing import Any
 
 import numpy as np
 
@@ -14,7 +14,16 @@ from numpy.typing import NDArray
 @dataclass(frozen=True, slots=True)
 class Allocation:
     """
-    Allocation of a bidder to an auction
+    Allocation of a bidder to an auction.
+    Represents the outcome of a single auction allocation.
+
+    Attributes:
+        bidders: list[int]
+            List of bidder IDs who won the auction
+        auction: int
+            ID of the auction
+        price: float
+            Total price paid by all bidders for this auction
     """
 
     bidders: list[int]
@@ -25,7 +34,14 @@ class Allocation:
 @dataclass(frozen=True, slots=True)
 class BRDResult(ABC):
     """
-    Base class for Best-Response Dynamics results
+    Base class for Best-Response Dynamics results.
+    Represents the outcome of a BRD process.
+
+    Attributes:
+        iteration: int
+            Number of iterations the BRD process ran
+        stats: dict[str, Any]
+            Statistics collected during the BRD process
     """
 
     iteration: int
@@ -35,7 +51,8 @@ class BRDResult(ABC):
 @dataclass(frozen=True, slots=True)
 class Cycle(BRDResult):
     """
-    Cycle state in BRD
+    Cycle state in BRD.
+    Represents the outcome when BRD enters a cycle of repeating states.
     """
 
     pass
@@ -43,8 +60,15 @@ class Cycle(BRDResult):
 
 @dataclass(frozen=True, slots=True)
 class PNE(BRDResult):
-    """ "
-    Pure Nash Equilibrium state in BRD
+    """
+    Pure Nash Equilibrium state in BRD.
+    Represents the outcome when BRD converges to a stable state.
+
+    Attributes:
+        x: NDArray[np.float64]
+            Allocation matrix (n x m)
+        p: NDArray[np.float64]
+            Price vector (m)
     """
 
     x: NDArray[np.float64]
@@ -54,7 +78,14 @@ class PNE(BRDResult):
 @dataclass(frozen=True, slots=True)
 class Violation:
     """
-    Violation of budgets for a bidder in an auction
+    Violation of budgets for a bidder in an auction.
+    Represents when a bidder exceeds their budget constraint.
+
+    Attributes:
+        bidder: int
+            ID of the bidder who violated their budget
+        auction: int
+            ID of the auction where the violation occurred
     """
 
     bidder: int
@@ -65,7 +96,17 @@ class Violation:
 class BestResponse:
     """
     Best response of a bidder in an auction.
-    The new alpha_q is provided as well as the new utility and the old utility.
+    Represents the optimal strategy adjustment for a bidder.
+
+    Attributes:
+        bidder: int
+            ID of the bidder
+        new_alpha_q: int
+            New pacing multiplier (scaled by q)
+        new_utility: float
+            Utility achieved with the new pacing multiplier
+        old_utility: float
+            Utility with the previous pacing multiplier
     """
 
     bidder: int
@@ -74,97 +115,12 @@ class BestResponse:
     old_utility: float
 
 
-class Distribution(Protocol):
-    """
-    Basic probability distribution interface
-    """
-
-    def sample(self) -> float: ...
-
-
-class Uniform:
-    """
-    Uniform distribution
-
-    Parameters:
-        low: float
-        high: float
-    """
-
-    def __init__(self, low: float, high: float):
-        self.low = low
-        self.high = high
-
-    def sample(self) -> float:
-        return np.random.uniform(self.low, self.high)
-
-
-class Gaussian:
-    """
-    Gaussian distribution
-
-    Parameters:
-        mean: float
-        std: float
-    """
-
-    def __init__(self, mean: float, std: float):
-        self.mean = mean
-        self.std = std
-
-    def sample(self) -> float:
-        return np.random.normal(self.mean, self.std)
-
-
-class Discrete:
-    """
-    Discrete distribution
-    Chooses from a list of value with equal probability
-
-    Parameters:
-        values: Iterable[float]
-    """
-
-    def __init__(self, values: Iterable[float]):
-        self.values = values
-
-    def sample(self) -> float:
-        return np.random.choice(list(self.values))
-
-
-class LogNormal:
-    """
-    Log-normal distribution
-
-    Parameters:
-        mean: float
-        std: float
-    """
-
-    def __init__(self, mean: float, std: float):
-        self.mean = mean
-        self.std = std
-
-    def sample(self) -> float:
-        return np.random.lognormal(self.mean, self.std)
-
-
-class Pareto:
-    """
-    Pareto distribution
-
-    Parameters:
-        alpha: float
-    """
-
-    def __init__(self, alpha: float):
-        self.alpha = alpha
-
-    def sample(self) -> float:
-        return np.random.pareto(self.alpha)
-
-
 class EnhancedJSONEncoder(json.JSONEncoder):
+    """
+    Enhanced JSON encoder that can handle NumPy types and dataclasses.
+    Extends the standard JSON encoder to properly serialize specialized types.
+    """
+
     def default(self, o: object) -> object:
         # Dataclass serialisation
         if dataclasses.is_dataclass(o):
