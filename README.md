@@ -32,6 +32,11 @@ notebooks/                   # Jupyter notebooks for analysis and visualization
 tests/                       # Unit and integration tests
 ```
 
+## Requirements
+The project requires Python 3.13+ due to the [optional GIL](https://peps.python.org/pep-0703/). The python interpreter must be built with the `--disable-gil` flag set. Additionally, the environment should have the variable `PYTHON_GIL=0` to disable the GIL.
+
+While the simulation still works with the GIL enabled, the performance will be significantly worse due to the lack of parallelism.
+
 ## Installation
 
 1. Clone the repository:
@@ -46,7 +51,7 @@ tests/                       # Unit and integration tests
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    ```
 
-   or using uv
+   or using the [uv project manager](https://github.com/astral-sh/uv)
    ```bash
    uv sync
    ```

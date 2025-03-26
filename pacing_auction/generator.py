@@ -78,6 +78,7 @@ class SampledAuctionGenerator(AuctionGenerator):
                 interested[i, j] = True
 
         # Generate uniformly random valuations
+        # v = np.full((n, m), -1.0)
         v = np.zeros((n, m))
         for i in range(n):
             for j in range(m):
@@ -155,6 +156,7 @@ class CorrelatedAuctionGenerator(AuctionGenerator):
                 interested[i, j] = True
 
         # Generate correlated valuations
+        # v = np.full((n, m), -1.0)
         v = np.zeros((n, m))
         mu = np.random.uniform(0, 1, size=m)  # Item-specific mean values
         for i in range(n):

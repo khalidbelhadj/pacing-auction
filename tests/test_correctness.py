@@ -28,9 +28,10 @@ def test_pne_nonexistence():
     Non-existence of PNE, even with 2 bidders and 2 auctions
     """
     n, m = 2, 2
-    sim = Auction(n, m, no_budget=True)
-    sim.v = np.array([[3 / 4, 0.0], [1.0, 1.0]])
-    sim.alpha_q = np.array([1, 1])
+    sim = Auction(n, m)
+    sim.b = [3 / 4, 2]
+    sim.v = [[3 / 4, 0.0], [1.0, 1.0]]
+    sim.alpha_q = [1, 1]
     result = sim.responses()
     assert isinstance(result, Cycle)
 

@@ -106,8 +106,8 @@ def parse_args():
     parser.add_argument(
         "--seed",
         type=int,
-        default=42,
-        help="Random seed for reproducibility (default: 42)",
+        default=time.time_ns() % 2**32,
+        help="Random seed for reproducibility (default: current time in nanoseconds)",
     )
     parser.add_argument(
         "--runs",
@@ -156,8 +156,8 @@ def create_output_dir(output_dir: str) -> str:
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join(output_dir, f"run_{timestamp}")
+    timestamp = datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
+    run_dir = os.path.join(output_dir, f"{timestamp}")
     os.makedirs(run_dir)
 
     return run_dir
@@ -259,10 +259,10 @@ def run_single_test(
 
         # Store the additional data requested: v matrix, b vector, and alpha_q
         result_data["v_matrix"] = (
-            auction.v.tolist()
+            auction._v.tolist()
         )  # Convert numpy array to list for JSON serialization
-        result_data["b_vector"] = auction.b.tolist()
-        result_data["alpha_q_vector"] = auction.alpha_q.tolist()
+        result_data["b_vector"] = auction._b.tolist()
+        result_data["alpha_q_vector"] = auction._alpha_q.tolist()
 
         if isinstance(result, Cycle):
             result_data["cycle_length"] = result.stats.get("cycle_length", 0)
@@ -332,7 +332,7 @@ def run_test_suite(
     elim_strategies: list[str],
     sigmas: list[float],
     deltas: list[float],
-    seed: int,
+    seed: int | None,
     runs: int,
     output_dir: str,
     no_threading: bool,
