@@ -8,6 +8,7 @@ dependencies = [
     "black>=25.1.0",
     "ipykernel>=6.29.5",
     "matplotlib>=3.10.1",
+    "nbstripout>=0.8.1",
     "numpy>=2.2.3",
     "pandas>=2.2.3",
     "pytest>=8.3.5",
