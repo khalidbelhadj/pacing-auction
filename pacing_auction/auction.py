@@ -12,7 +12,7 @@ from time import perf_counter
 from typing import Any
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import NDArray, ArrayLike
 
 from pacing_auction.elimination import ElimStrategy, Subsequent
 from pacing_auction.generator import AuctionGenerator, CompleteAuctionGenerator
@@ -139,7 +139,7 @@ class Auction:
         return self._v
 
     @v.setter
-    def v(self, value):
+    def v(self, value: ArrayLike):
         try:
             array = np.array(value, dtype=np.float64)
             if array.shape != (self.n, self.m):
@@ -148,7 +148,9 @@ class Auction:
                 )
             self._v = array
         except (ValueError, TypeError):
-            raise TypeError("v must be convertible to a numpy array with shape (n, m)")
+            raise TypeError(
+                f"v must be convertible to a numpy array with shape ({self.n}, {self.m})"
+            )
 
     @property
     def b(self):
@@ -162,17 +164,19 @@ class Auction:
         return self._b
 
     @b.setter
-    def b(self, value):
+    def b(self, value: ArrayLike):
         try:
             array = np.array(value, dtype=np.float64)
             if array.shape != (self.n,):
                 raise ValueError(f"b must have shape ({self.n},), got {array.shape}")
             self._b = array
         except (ValueError, TypeError):
-            raise TypeError("b must be convertible to a numpy array with shape (n,)")
+            raise TypeError(
+                f"b must be convertible to a numpy array with shape ({self.n},)"
+            )
 
     @property
-    def alpha_q(self):
+    def alpha_q(self) -> NDArray[np.uint64]:
         """
         Pacing multiplier vector representing scaled integer pacing values.
 
@@ -186,7 +190,7 @@ class Auction:
         return self._alpha_q
 
     @alpha_q.setter
-    def alpha_q(self, value):
+    def alpha_q(self, value: ArrayLike):
         try:
             # First convert to float to check values, then to uint64
             temp_array = np.array(value, dtype=np.float64)
@@ -201,7 +205,7 @@ class Auction:
             self._alpha_q = temp_array.astype(np.uint64)
         except (ValueError, TypeError):
             raise TypeError(
-                "alpha_q must be convertible to a numpy array with shape (n,)"
+                f"alpha_q must be convertible to a numpy array with shape ({self.n},)"
             )
 
     # Utility functions
@@ -418,14 +422,27 @@ class Auction:
                 if other_bidder == bidder or self._v[bidder][auction] == 0:
                     continue
 
-                other_bid: float = self._v[other_bidder][auction] * (
-                    self._alpha_q[other_bidder] / self.q
-                )
+                other_v = self._v[other_bidder][auction]
+                other_alpha_q = self._alpha_q[other_bidder]
+                bidder_v = self._v[bidder][auction]
 
-                multiple: float = other_bid / self._v[bidder][auction]
-                q_multiple: int = floor(multiple * self.q) + 1
-                new_alpha_q: int = min(q_multiple, self.q)
+                new_alpha_q: float = (other_v * other_alpha_q) / bidder_v
+
+                # Match their bid
+                if new_alpha_q.is_integer():
+                    new_alpha_qs.add(int(new_alpha_q))
+
+                # Outbid them
+                new_alpha_q = floor(new_alpha_q) + 1
+                new_alpha_q = min(new_alpha_q, self.q)
                 new_alpha_qs.add(new_alpha_q)
+
+                # Debugging
+                new_bid = bidder_v * new_alpha_q
+                other_bid = other_v * self._alpha_q[other_bidder]
+                if new_bid < other_bid:
+                    logger.debug(f"{new_bid} < {other_bid}")
+
         return new_alpha_qs
 
     def best_response(self, bidder: int) -> BestResponse:
