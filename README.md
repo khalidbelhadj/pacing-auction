@@ -2,17 +2,6 @@
 
 A Python framework for simulating and analysing first-price pacing auctions with budget constraints.
 
-## Project Overview
-
-This project implements a comprehensive simulator for first-price auctions where bidders have budget constraints and use pacing multipliers to scale down their bids. The simulator can find pure Nash equilibria (PNE) or cycles in bidder strategies.
-
-Key features:
-- Multiple auction generators (complete, sampled, correlated)
-- Various elimination strategies for bidders who violate budget constraints
-- Multithreaded best response dynamics for improved performance
-- Comprehensive metrics and statistics collection
-- Visualization tools for analysing results
-
 ## Project Structure
 
 ```
