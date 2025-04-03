@@ -14,7 +14,7 @@ class AuctionGenerator(Protocol):
 
     from pacing_auction import auction
 
-    def generate(self, auction: auction.Auction) -> None: ...
+    def generate(self, auction: auction.Auction, rng: np.random.Generator) -> None: ...
 
 
 class CompleteAuctionGenerator(AuctionGenerator):
@@ -28,20 +28,20 @@ class CompleteAuctionGenerator(AuctionGenerator):
 
     from pacing_auction import auction
 
-    def generate(self, auction: auction.Auction) -> None:
+    def generate(self, auction: auction.Auction, rng: np.random.Generator) -> None:
         n, m = auction.n, auction.m
 
         # Generate uniformly random valuations
         v = np.zeros((n, m))
         for i in range(n):
             for j in range(m):
-                v[i, j] = np.random.uniform(0, 1)
+                v[i, j] = rng.uniform(0, 1)
 
         # Generate budgets
         b = np.zeros(n)
         v_sum = np.sum(v, axis=1)
         for i in range(n):
-            b[i] = np.random.uniform(0, v_sum[i]) if v_sum[i] > 0 else 0
+            b[i] = rng.uniform(0, v_sum[i]) if v_sum[i] > 0 else 0
 
         auction.v = v
         auction.b = b
@@ -61,29 +61,28 @@ class SampledAuctionGenerator(AuctionGenerator):
 
     from pacing_auction import auction
 
-    def generate(self, auction: auction.Auction) -> None:
+    def generate(self, auction: auction.Auction, rng: np.random.Generator) -> None:
         n, m = auction.n, auction.m
 
         # Choose a random subset of bidders for each auction
         interested: NDArray[np.bool_] = np.zeros((n, m), dtype=bool)
         for j in range(m):
-            subset_size = np.random.randint(1, n + 1)
-            subset = np.random.choice(n, size=subset_size, replace=False)
+            subset_size = rng.integers(1, n + 1)
+            subset = rng.choice(n, size=subset_size, replace=False)
             interested[subset, j] = True
 
         # Ensure every bidder is interested in at least one item
         for i in range(n):
             if not np.any(interested[i]):
-                j = np.random.randint(0, m)
+                j = rng.integers(0, m)
                 interested[i, j] = True
 
         # Generate uniformly random valuations
-        # v = np.full((n, m), -1.0)
         v = np.zeros((n, m))
         for i in range(n):
             for j in range(m):
                 if interested[i, j]:
-                    v[i, j] = np.random.uniform(0, 1)
+                    v[i, j] = rng.uniform(0, 1)
 
         # Generate budgets
         b = np.zeros(n)
@@ -91,7 +90,7 @@ class SampledAuctionGenerator(AuctionGenerator):
         for i in range(n):
             # Ensure minimum budget is non-zero to avoid edge cases
             min_budget = 0.01 if v_sum[i] > 0 else 0
-            b[i] = np.random.uniform(min_budget, max(min_budget, v_sum[i]))
+            b[i] = rng.uniform(min_budget, max(min_budget, v_sum[i]))
 
         auction.v = v
         auction.b = b
@@ -139,26 +138,25 @@ class CorrelatedAuctionGenerator(AuctionGenerator):
         # Sample from the truncated normal distribution
         return stats.truncnorm.rvs(a, b, loc=comp_mu, scale=self.sigma)  # type: ignore
 
-    def generate(self, auction: auction.Auction) -> None:
+    def generate(self, auction: auction.Auction, rng: np.random.Generator) -> None:
         n, m = auction.n, auction.m
 
         # Choose a random subset of bidders for each auction
         interested: NDArray[np.bool_] = np.zeros((n, m), dtype=bool)
         for j in range(m):
-            subset_size = np.random.randint(1, n + 1)
-            subset = np.random.choice(n, size=subset_size, replace=False)
+            subset_size = rng.integers(1, n + 1)
+            subset = rng.choice(n, size=subset_size, replace=False)
             interested[subset, j] = True
 
         # Ensure every bidder is interested in at least one item
         for i in range(n):
             if not np.any(interested[i]):
-                j = np.random.randint(0, m)
+                j = rng.integers(0, m)
                 interested[i, j] = True
 
         # Generate correlated valuations
-        # v = np.full((n, m), -1.0)
         v = np.zeros((n, m))
-        mu = np.random.uniform(0, 1, size=m)  # Item-specific mean values
+        mu = rng.uniform(0, 1, size=m)  # Item-specific mean values
         for i in range(n):
             for j in range(m):
                 if interested[i, j]:
@@ -170,7 +168,7 @@ class CorrelatedAuctionGenerator(AuctionGenerator):
         for i in range(n):
             # Ensure minimum budget is non-zero to avoid edge cases
             min_budget = 0.01 if v_sum[i] > 0 else 0
-            b[i] = np.random.uniform(min_budget, max(min_budget, v_sum[i]))
+            b[i] = rng.uniform(min_budget, max(min_budget, v_sum[i]))
 
         auction.v = v
         auction.b = b

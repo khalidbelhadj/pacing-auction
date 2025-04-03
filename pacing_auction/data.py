@@ -26,6 +26,8 @@ class Allocation:
             Total price paid by all bidders for this auction
     """
 
+    __abc = 2
+
     bidders: list[int]
     auction: int
     price: float  # Total price paid by all bidders
@@ -45,6 +47,7 @@ class BRDResult(ABC):
     """
 
     iteration: int
+    alpha_q: NDArray[np.uint64]
     stats: dict[str, Any] = field(kw_only=True, repr=False)
 
 
@@ -111,8 +114,8 @@ class BestResponse:
 
     bidder: int
     new_alpha_q: int
-    new_utility: float
-    old_utility: float
+    new_utility: NDArray[np.float64]
+    old_utility: NDArray[np.float64]
 
 
 class EnhancedJSONEncoder(json.JSONEncoder):

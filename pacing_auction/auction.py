@@ -86,22 +86,20 @@ class Auction:
     collect_stats: bool = True
 
     # Misc
-    seed: int | None = None
     stats: dict[str, Any] = field(default_factory=dict, init=False)
     generator: AuctionGenerator = CompleteAuctionGenerator()
+    rng: np.random.Generator = field(default_factory=np.random.default_rng, repr=False)
+
+    executor: ThreadPoolExecutor | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.seed:
-            np.random.seed(self.seed)
-        else:
-            self.seed = np.random.get_state()[1][0]  # type: ignore
+        self.generator.generate(self, self.rng)
 
-        self.generator.generate(self)
         if self.no_budget:
             self._b = np.full(self.n, float("inf"))
 
         self._alpha_q = np.array(
-            [np.round(np.random.uniform(1, self.q)) for _ in range(self.n)]
+            [np.round(self.rng.uniform(1, self.q)) for _ in range(self.n)]
         )
 
         self.init_stats()
@@ -113,18 +111,11 @@ class Auction:
         self.stats = {
             "time": perf_counter(),
             "cycle_length": 0,
-            "max_social_welfare": 0,
-            "max_liquid_welfare": 0,
-            "max_revenue": 0,
-            "min_social_welfare": float("inf"),
-            "min_liquid_welfare": float("inf"),
-            "min_revenue": float("inf"),
             "utility": [list[float]() for _ in range(self.n)],
             "alpha_q": [list[float]() for _ in range(self.n)],
-            # "d_utility": [list[float]() for _ in range(self.n)],
-            # "auction_count": 0,
-            # "social_welfare": list[float](),
-            # "liquid_welfare": list[float](),
+            "social_welfare": list[float](),
+            "liquid_welfare": list[float](),
+            "revenue": list[float](),
         }
 
     @property
@@ -297,10 +288,10 @@ class Auction:
         Calculate the social welfare of the auction given the allocation and prices
 
         Parameters:
-            p: NDArray[np.float64]
-                The prices of the auctions (m)
             x: NDArray[np.float64]
                 The allocation for each bidder and auction (n x m)
+            p: NDArray[np.float64]
+                The prices of the auctions (m)
         Returns:
             float
             The social welfare of the auction
@@ -312,10 +303,10 @@ class Auction:
         Calculate the liquid welfare of the auction given the allocation and prices
 
         Parameters:
-            p: NDArray[np.float64]
-                The prices of the auctions (m)
             x: NDArray[np.float64]
                 The allocation for each bidder and auction (n x m)
+            p: NDArray[np.float64]
+                The prices of the auctions (m)
         Returns:
             float
             The liquid welfare of the auction
@@ -381,7 +372,7 @@ class Auction:
         Compute the allocation of the auction given the current state
 
         Parameters:
-            adjustment: Optional[tuple[int, float]] = None
+            adjustment: Optional[tuple[int, int]] = None
                 The adjustment to the alpha values for a bidder
 
         Returns:
@@ -429,19 +420,19 @@ class Auction:
                 new_alpha_q: float = (other_v * other_alpha_q) / bidder_v
 
                 # Match their bid
-                if new_alpha_q.is_integer():
+                if new_alpha_q.is_integer() and new_alpha_q <= self.q:
                     new_alpha_qs.add(int(new_alpha_q))
 
                 # Outbid them
                 new_alpha_q = floor(new_alpha_q) + 1
-                new_alpha_q = min(new_alpha_q, self.q)
-                new_alpha_qs.add(new_alpha_q)
+                if new_alpha_q <= self.q:
+                    new_alpha_qs.add(new_alpha_q)
 
                 # Debugging
                 new_bid = bidder_v * new_alpha_q
-                other_bid = other_v * self._alpha_q[other_bidder]
+                other_bid = other_v * other_alpha_q
                 if new_bid < other_bid:
-                    logger.debug(f"{new_bid} < {other_bid}")
+                    logger.error(f"{new_bid} < {other_bid}")
 
         return new_alpha_qs
 
@@ -460,47 +451,45 @@ class Auction:
         """
         curr_alpha_q = self._alpha_q[bidder]
         initial_x, initial_p = self.auction()
-        curr_util = self.utility(initial_x, initial_p)[bidder]
+        curr_util = self.utility(initial_x, initial_p)
 
-        max_util = curr_util
+        max_util: NDArray[np.float64] = curr_util
         max_alpha_q = curr_alpha_q
         new_alpha_qs = self.best_response_candidates(bidder)
 
         if self.threaded:
+            executor = self.executor or ThreadPoolExecutor()
 
-            def func(alpha_q: int, bidder: int) -> float:
+            def func(alpha_q: int, bidder: int) -> NDArray[np.float64]:
                 x, p = self.auction((bidder, alpha_q))
-                return self.utility(x, p)[bidder]
+                return self.utility(x, p)
 
             future_to_alpha_q = {
-                self.executor.submit(func, new_alpha_q, bidder): new_alpha_q
+                executor.submit(func, new_alpha_q, bidder): new_alpha_q
                 for new_alpha_q in new_alpha_qs
             }
 
             for future in as_completed(future_to_alpha_q):
                 new_alpha_q = future_to_alpha_q[future]
                 new_utility = future.result()
-                if new_utility > max_util or (
-                    new_utility == max_util and new_alpha_q > max_alpha_q
+                if new_utility[bidder] > max_util[bidder] or (
+                    new_utility[bidder] == max_util[bidder]
+                    and new_alpha_q > max_alpha_q
                 ):
                     max_util = new_utility
                     max_alpha_q = new_alpha_q
         else:
             for new_alpha_q in sorted(new_alpha_qs):
                 x, p = self.auction((bidder, new_alpha_q))
-                new_utility = self.utility(x, p)[bidder]
-                if new_utility >= max_util:
+                new_utility = self.utility(x, p)
+                if new_utility[bidder] >= max_util[bidder]:
                     max_util = new_utility
                     max_alpha_q = new_alpha_q
         return BestResponse(bidder, max_alpha_q, max_util, curr_util)
 
-    def responses(self, max_cycles: int = 1) -> BRDResult:
+    def responses(self) -> BRDResult:
         """
         Find the Pure Nash Equilibrium or Cycle of the auction, given the current state
-
-        Params:
-            max_cycles: int
-                The maximum number of cycles to detect until we terminate
 
         Returns:
             BRDResult
@@ -523,8 +512,6 @@ class Auction:
             self.init_stats()
 
         iteration = 1
-        cycles_found = 0
-        cycle_start_iterations = list[int]()
         seen = {tuple(self._alpha_q): 0}
         order = list(range(self.n))
 
@@ -540,41 +527,23 @@ class Auction:
                     order[0], order[swap_idx] = order[swap_idx], order[0]
 
             # Iterate over bidders and find the best response
+
             for bidder in order:
-                res = self.best_response(bidder)
-                d_utility = res.new_utility - res.old_utility
-                if d_utility > self.epsilon:
-                    # Update the alpha value
-                    self._alpha_q[bidder] = res.new_alpha_q
+                br = self.best_response(bidder)
+                d_utility = br.new_utility - br.old_utility
+                if d_utility[bidder] > self.epsilon:
+                    bidder_utilty = br.new_utility[bidder]
+                    self._alpha_q[bidder] = br.new_alpha_q
+                else:
+                    bidder_utilty = br.old_utility[bidder]
 
                 if self.stats:
                     x, p = self.auction()
-                    self.stats["utility"][bidder].append(self.utility(x, p)[bidder])
+                    self.stats["utility"][bidder].append(bidder_utilty)
                     self.stats["alpha_q"][bidder].append(self._alpha_q[bidder])
-                    self.stats["max_social_welfare"] = max(
-                        self.stats["max_social_welfare"],
-                        self.social_welfare(x, p),
-                    )
-                    self.stats["max_liquid_welfare"] = max(
-                        self.stats["max_liquid_welfare"],
-                        self.liquid_welfare(x, p),
-                    )
-                    self.stats["max_revenue"] = max(
-                        self.stats["max_revenue"],
-                        self.liquid_welfare(x, p),
-                    )
-                    self.stats["min_social_welfare"] = min(
-                        self.stats["min_social_welfare"],
-                        self.social_welfare(x, p),
-                    )
-                    self.stats["min_liquid_welfare"] = min(
-                        self.stats["min_liquid_welfare"],
-                        self.liquid_welfare(x, p),
-                    )
-                    self.stats["min_revenue"] = min(
-                        self.stats["min_revenue"],
-                        self.liquid_welfare(x, p),
-                    )
+                    self.stats["social_welfare"].append(self.social_welfare(x, p))
+                    self.stats["liquid_welfare"].append(self.liquid_welfare(x, p))
+                    self.stats["revenue"].append(self.revenue(x, p))
 
             new_state = tuple(self._alpha_q)
 
@@ -582,27 +551,19 @@ class Auction:
             if new_state == old_state:
                 if self.stats:
                     self.stats["time"] = perf_counter() - self.stats["time"]
-                    self.stats["cycles_found"] = cycles_found
-                    self.stats["cycle_start_iterations"] = cycle_start_iterations
-                result = PNE(iteration, *self.auction(), stats=deepcopy(self.stats))
-                return result
+                return PNE(
+                    iteration,
+                    self.alpha_q[:],
+                    *self.auction(),
+                    stats=deepcopy(self.stats),
+                )
 
             # Cycle detection
             if new_state in seen:
-                cycles_found += 1
-                cycle_length = iteration - seen[new_state]
-                cycle_start_iterations.append(seen[new_state])
-
                 if self.stats:
-                    self.stats["cycle_length"] = cycle_length
-
-                if cycles_found >= max_cycles:
-                    if self.stats:
-                        self.stats["time"] = perf_counter() - self.stats["time"]
-                        self.stats["cycles_found"] = cycles_found
-                        self.stats["cycle_start_iterations"] = cycle_start_iterations
-                    result = Cycle(iteration, stats=deepcopy(self.stats))
-                    return result
+                    self.stats["time"] = perf_counter() - self.stats["time"]
+                    self.stats["cycle_length"] = iteration - seen[new_state]
+                return Cycle(iteration, self.alpha_q[:], stats=deepcopy(self.stats))
 
             seen[new_state] = iteration
             iteration += 1
