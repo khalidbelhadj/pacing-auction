@@ -93,7 +93,16 @@ class Auction:
     executor: ThreadPoolExecutor | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self.generator.generate(self, self.rng)
+        if self.n <= 0:
+            raise ValueError("Number of bidders must be positive")
+        if self.m <= 0:
+            raise ValueError("Number of items must be positive")
+        if self.q <= 0:
+            raise ValueError("Granularity of pacing multipliers must be positive")
+        if self.epsilon < 0:
+            raise ValueError("Epsilon must be non-negative")
+
+        self.v, self.b = self.generator.generate(self.n, self.m, self.rng)
 
         if self.no_budget:
             self._b = np.full(self.n, float("inf"))
@@ -189,7 +198,7 @@ class Auction:
                 raise ValueError(
                     f"alpha_q must have shape ({self.n},), got {temp_array.shape}"
                 )
-            if np.any(temp_array <= 0):
+            if np.any(temp_array < 0):
                 raise ValueError("All values in alpha_q must be positive")
             if np.any(temp_array > self.q):
                 raise ValueError(f"All values in alpha_q must be <= q ({self.q})")
@@ -233,7 +242,6 @@ class Auction:
         with open(file_path, "w", encoding="utf-8") as file:
             json.dump(self.__dict__, file)
 
-    # Metrics and calculations
     def value(
         self, x: NDArray[np.float64], p: NDArray[np.float64]
     ) -> NDArray[np.float64]:
@@ -525,8 +533,6 @@ class Auction:
                 if order[0] == last_bidder:
                     swap_idx = np.random.randint(1, len(order))
                     order[0], order[swap_idx] = order[swap_idx], order[0]
-
-            # Iterate over bidders and find the best response
 
             for bidder in order:
                 br = self.best_response(bidder)

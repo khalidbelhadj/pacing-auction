@@ -12,9 +12,9 @@ class AuctionGenerator(Protocol):
     with different valuation and budget patterns.
     """
 
-    from pacing_auction import auction
-
-    def generate(self, auction: auction.Auction, rng: np.random.Generator) -> None: ...
+    def generate(
+        self, n: int, m: int, rng: np.random.Generator
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]: ...
 
 
 class CompleteAuctionGenerator(AuctionGenerator):
@@ -26,25 +26,23 @@ class CompleteAuctionGenerator(AuctionGenerator):
     Budgets are drawn uniformly from [0, sum of bidder's valuations].
     """
 
-    from pacing_auction import auction
+    def generate(
+        self, n: int, m: int, rng: np.random.Generator
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
 
-    def generate(self, auction: auction.Auction, rng: np.random.Generator) -> None:
-        n, m = auction.n, auction.m
-
-        # Generate uniformly random valuations
+        # generate uniformly random valuations
         v = np.zeros((n, m))
         for i in range(n):
             for j in range(m):
                 v[i, j] = rng.uniform(0, 1)
 
-        # Generate budgets
+        # generate budgets
         b = np.zeros(n)
         v_sum = np.sum(v, axis=1)
         for i in range(n):
-            b[i] = rng.uniform(0, v_sum[i]) if v_sum[i] > 0 else 0
+            b[i] = rng.uniform(0, v_sum[i])
 
-        auction.v = v
-        auction.b = b
+        return v, b
 
 
 class SampledAuctionGenerator(AuctionGenerator):
@@ -59,10 +57,9 @@ class SampledAuctionGenerator(AuctionGenerator):
     Budgets are drawn uniformly from [0, sum of bidder's valuations].
     """
 
-    from pacing_auction import auction
-
-    def generate(self, auction: auction.Auction, rng: np.random.Generator) -> None:
-        n, m = auction.n, auction.m
+    def generate(
+        self, n: int, m: int, rng: np.random.Generator
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
 
         # Choose a random subset of bidders for each auction
         interested: NDArray[np.bool_] = np.zeros((n, m), dtype=bool)
@@ -88,12 +85,9 @@ class SampledAuctionGenerator(AuctionGenerator):
         b = np.zeros(n)
         v_sum = np.sum(v, axis=1)
         for i in range(n):
-            # Ensure minimum budget is non-zero to avoid edge cases
-            min_budget = 0.01 if v_sum[i] > 0 else 0
-            b[i] = rng.uniform(min_budget, max(min_budget, v_sum[i]))
+            b[i] = rng.uniform(0, v_sum[i])
 
-        auction.v = v
-        auction.b = b
+        return v, b
 
 
 class CorrelatedAuctionGenerator(AuctionGenerator):
@@ -112,8 +106,6 @@ class CorrelatedAuctionGenerator(AuctionGenerator):
             Difference between mean values of the two gaussians
     """
 
-    from pacing_auction import auction
-
     def __init__(self, sigma: float = 0.1, delta: float = 0):
         if sigma <= 0:
             raise ValueError("sigma must be positive")
@@ -130,6 +122,7 @@ class CorrelatedAuctionGenerator(AuctionGenerator):
         comp_mu: float = mu + np.random.choice([-self.delta, self.delta])
 
         # Ensure comp_mu is within a reasonable range to avoid numerical issues
+        comp_mu = np.clip(comp_mu, 0, 1)
 
         # Calculate the bounds for truncation
         a = (0 - comp_mu) / self.sigma
@@ -138,9 +131,9 @@ class CorrelatedAuctionGenerator(AuctionGenerator):
         # Sample from the truncated normal distribution
         return stats.truncnorm.rvs(a, b, loc=comp_mu, scale=self.sigma)  # type: ignore
 
-    def generate(self, auction: auction.Auction, rng: np.random.Generator) -> None:
-        n, m = auction.n, auction.m
-
+    def generate(
+        self, n: int, m: int, rng: np.random.Generator
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         # Choose a random subset of bidders for each auction
         interested: NDArray[np.bool_] = np.zeros((n, m), dtype=bool)
         for j in range(m):
@@ -166,9 +159,38 @@ class CorrelatedAuctionGenerator(AuctionGenerator):
         b = np.zeros(n)
         v_sum = np.sum(v, axis=1)
         for i in range(n):
-            # Ensure minimum budget is non-zero to avoid edge cases
-            min_budget = 0.01 if v_sum[i] > 0 else 0
-            b[i] = rng.uniform(min_budget, max(min_budget, v_sum[i]))
+            b[i] = rng.uniform(0, v_sum[i])
 
-        auction.v = v
-        auction.b = b
+        return v, b
+
+
+class BinaryAuctionGenerator(AuctionGenerator):
+    """
+    Generates a binary auction where every bidder has
+    a binary valuation for every item (0 or 1).
+    Budgets are drawn uniformly from [0, sum of bidder's valuations].
+    """
+
+    def generate(
+        self, n: int, m: int, rng: np.random.Generator
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        # Choose a random subset of bidders for each auction
+        v = np.zeros((n, m))
+        for j in range(m):
+            subset_size = rng.integers(1, n + 1)
+            subset = rng.choice(n, size=subset_size, replace=False)
+            v[subset, j] = 1
+
+        # Ensure every bidder is interested in at least one item
+        for i in range(n):
+            if not np.any(v[i]):
+                j = rng.integers(0, m)
+                v[i, j] = 1
+
+        # Generate budgets
+        b = np.zeros(n)
+        v_sum = np.sum(v, axis=1)
+        for i in range(n):
+            b[i] = rng.uniform(0, v_sum[i])
+
+        return v, b

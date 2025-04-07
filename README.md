@@ -10,13 +10,13 @@ pacing_auction/              # Main package directory
 ├── data.py                  # Data classes and structures
 ├── elimination.py           # Elimination strategies for budget violations
 ├── generator.py             # Auction state generators
-└── __init__.py              # Package initialization
+└── __init__.py              # Package initialisation
 
 scripts/                     # Utility scripts
 ├── results.py               # Script for running comprehensive test suites
 └── example.py               # Example script for running a simple auction
 
-notebooks/                   # Jupyter notebooks for analysis and visualization
+notebooks/                   # Jupyter notebooks for analysis and visualisation
 
 tests/                       # Unit and integration tests
 ```
@@ -55,6 +55,10 @@ While the simulation still works with the GIL enabled, the performance will be s
 Below is a simple example of creating and running an auction simulation:
 
 ```python
+import os
+import sys
+import numpy as np
+
 from pacing_auction.auction import Auction
 from pacing_auction.data import PNE, Cycle
 from pacing_auction.generator import CompleteAuctionGenerator
@@ -64,7 +68,7 @@ auction = Auction(
     n=3,  # Number of bidders
     m=4,  # Number of items
     q=1000,  # Granularity of pacing multipliers
-    seed=42,  # Random seed for reproducibility
+    rng=np.random.default_rng(42),  # Random Generator for reproducibility
     generator=CompleteAuctionGenerator(),  # Valuation generator
 )
 
@@ -72,8 +76,9 @@ auction = Auction(
 result = auction.responses()
 
 match result:
-    case PNE(iteration, x, p, stats=stats):
+    case PNE(iteration, alpha_q, x, p, stats=stats):
         print(f"Found PNE in {result.iteration} iterations")
+        print(f"PNE alpha values: {alpha_q / auction.q}")
 
         # Calculate metrics
         social_welfare = auction.social_welfare(x, p)
@@ -88,6 +93,7 @@ match result:
         print(f"Cycle length: {result.stats['cycle_length']}")
     case _:
         pass
+
 ```
 
 ## Running Experiments

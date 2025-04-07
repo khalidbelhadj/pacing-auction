@@ -1,6 +1,8 @@
 import os
 import sys
 
+import numpy as np
+
 # Add project root to the Python path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 sys.path.insert(0, project_root)
@@ -14,7 +16,7 @@ auction = Auction(
     n=3,  # Number of bidders
     m=4,  # Number of items
     q=1000,  # Granularity of pacing multipliers
-    seed=42,  # Random seed for reproducibility
+    rng=np.random.default_rng(42),  # Random Generator for reproducibility
     generator=CompleteAuctionGenerator(),  # Valuation generator
 )
 
@@ -22,8 +24,9 @@ auction = Auction(
 result = auction.responses()
 
 match result:
-    case PNE(iteration, x, p, stats=stats):
+    case PNE(iteration, alpha_q, x, p, stats=stats):
         print(f"Found PNE in {result.iteration} iterations")
+        print(f"PNE alpha values: {alpha_q / auction.q}")
 
         # Calculate metrics
         social_welfare = auction.social_welfare(x, p)

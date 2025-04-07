@@ -35,19 +35,13 @@ from pacing_auction import elimination
 from pacing_auction.auction import Auction
 from pacing_auction.data import Cycle
 from pacing_auction.generator import (
+    BinaryAuctionGenerator,
     CompleteAuctionGenerator,
     SampledAuctionGenerator,
     CorrelatedAuctionGenerator,
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler()],
-)
-
-logger = logging.getLogger("test_suite")
+logger = logging.getLogger("results")
 
 
 @dataclass
@@ -192,7 +186,7 @@ def parse_args():
         "min_m": 2,
         "max_m": 10,
         "step_m": 1,
-        "generators": ["complete", "correlated", "sampled"],
+        "generators": ["complete", "correlated", "sampled", "binary"],
         "elim_strategies": ["subsequent", "all"],
         "sigmas": [0.05, 0.1, 0.2, 0.3],
         "deltas": [0.0, 0.25, 0.5, 0.75],
@@ -249,9 +243,9 @@ def create_output_dir(output_dir: str) -> str:
     return run_dir
 
 
-def run_single_test(config: Job) -> ResultData:
+def run_single_test(job: Job) -> ResultData:
     """Run a single test for a given configuration"""
-    c = config
+    c = job
     result_data = ResultData()
 
     result_data.id = c.id
@@ -275,8 +269,12 @@ def run_single_test(config: Job) -> ResultData:
                     "Sigma and delta must be provided for correlated generator"
                 )
             generator = CorrelatedAuctionGenerator(sigma=c.sigma, delta=c.delta)
-        else:  # sampled
+        elif c.generator == "sampled":
             generator = SampledAuctionGenerator()
+        elif c.generator == "binary":
+            generator = BinaryAuctionGenerator()
+        else:
+            raise ValueError(f"Unknown generator type: {c.generator}")
 
         elim_strategy: elimination.ElimStrategy = elimination.Subsequent
         if c.elim_strategy == "current":
@@ -298,6 +296,7 @@ def run_single_test(config: Job) -> ResultData:
             threaded=not c.no_threading,
             generator=generator,
             elim=elim_strategy,
+            no_budget=c.generator == "binary",
         )
 
         import signal
@@ -359,7 +358,7 @@ def save_all_results(all_results: list[ResultData], output_dir: str):
                 "v_matrix",
                 "b_vector",
                 "alpha_q_vector",
-                "utility",
+                "utility_stats",
                 "alpha_q_stats",
                 "social_welfare_stats",
                 "liquid_welfare_stats",
@@ -427,46 +426,44 @@ def save_all_results(all_results: list[ResultData], output_dir: str):
 
 
 def run_test_suite(
-    configs: list[Job],
+    jobs: list[Job],
     output_dir: str,
     workers: int,
     save_interval: int,
 ) -> None:
     """Run the comprehensive test suite"""
-    total_configs = len(configs)
+    total_jobs = len(jobs)
     completed = 0
 
     start_time = time.time()
-
-    # Store all results
     all_results = []
 
     # Process configurations in parallel using ProcessPoolExecutor
-    logger.info(f"Total tests to run: {total_configs}")
+    logger.info(f"Total tests to run: {total_jobs}")
     logger.info(f"Running tests with {workers} worker processes")
 
     with ProcessPoolExecutor(max_workers=workers) as executor:
         # Submit all configurations to the executor
-        future_to_config = {
-            executor.submit(run_single_test, config): config for config in configs
+        future_to_job = {
+            executor.submit(run_single_test, config): config for config in jobs
         }
 
         # Process results as they complete
-        for future in as_completed(future_to_config):
-            config = future_to_config[future]
+        for future in as_completed(future_to_job):
+            job = future_to_job[future]
             try:
                 result = future.result()
                 all_results.append(result)
 
                 completed += 1
                 logger.info(
-                    f"Completed configuration ({config.n}, {config.m}) with {config.generator} generator and {config.elim_strategy} elimination strategy"
+                    f"Completed job {job.id} ({job.n}, {job.m}) with {job.generator} generator and {job.elim_strategy} elimination strategy"
                     + (
-                        f" (sigma={config.sigma}, delta={config.delta})"
-                        if config.sigma is not None
+                        f" (sigma={job.sigma}, delta={job.delta})"
+                        if job.sigma is not None
                         else ""
                     )
-                    + f" - Progress: {completed}/{total_configs} tests ({completed/total_configs*100:.1f}%)"
+                    + f" - Progress: {completed}/{total_jobs} tests ({completed/total_jobs*100:.1f}%)"
                 )
 
                 # Save intermediate results if needed
@@ -475,9 +472,7 @@ def run_test_suite(
                     logger.info(f"Saved intermediate results after {completed} tests")
 
             except Exception as e:
-                logger.error(
-                    f"Error processing configuration ({config.n}, {config.m}):"
-                )
+                logger.error(f"Error processing configuration ({job.n}, {job.m}):")
                 logger.error(traceback.format_exc())
 
     end_time = time.time()
@@ -487,12 +482,12 @@ def run_test_suite(
 
     # Print summary statistics
     print("\nTest Suite Summary:")
-    print(f"Total tests run: {total_configs}")
+    print(f"Total tests run: {total_jobs}")
     print(f"Total execution time: {end_time - start_time:.2f} seconds")
     print(f"Results saved to: {output_dir}")
 
 
-def generate_configs(
+def generate_jobs(
     min_n: int,
     max_n: int,
     step_n: int,
@@ -559,7 +554,7 @@ def generate_configs(
     return configs
 
 
-def find_missing_configs(continue_dir: str) -> list[Job]:
+def find_missing_jobs(continue_dir: str) -> list[Job]:
     """Find configurations that haven't been completed yet from a previous run"""
     # Path to the config file
     config_path = os.path.join(continue_dir, "config.json")
@@ -614,7 +609,7 @@ def find_missing_configs(continue_dir: str) -> list[Job]:
             completion_counts[config_key] = 1
 
     # Generate missing configurations
-    missing_configs = []
+    missing_jobs = []
     next_id = max_id + 1
 
     # Generate the ranges of sizes
@@ -640,7 +635,7 @@ def find_missing_configs(continue_dir: str) -> list[Job]:
 
                                 # Add the missing runs
                                 for run in range(missing_runs):
-                                    missing_configs.append(
+                                    missing_jobs.append(
                                         Job(
                                             id=next_id,
                                             n=n,
@@ -668,7 +663,7 @@ def find_missing_configs(continue_dir: str) -> list[Job]:
 
                         # Add the missing runs
                         for run in range(missing_runs):
-                            missing_configs.append(
+                            missing_jobs.append(
                                 Job(
                                     id=next_id,
                                     n=n,
@@ -686,35 +681,51 @@ def find_missing_configs(continue_dir: str) -> list[Job]:
                             next_id += 1
 
     logger.info(
-        f"Found {len(missing_configs)} missing configurations out of {len(n_values) * len(m_values) * len(config['generators']) * len(config['elim_strategies']) * config['runs']} total configurations"
+        f"Found {len(missing_jobs)} missing configurations out of {len(n_values) * len(m_values) * len(config['generators']) * len(config['elim_strategies']) * config['runs']} total configurations"
     )
-    return missing_configs
+    return missing_jobs
+
+
+# Configure logging
+def setup_logging(log_file: str | None = None):
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+
+    if log_file:
+        # Create directory for log file if it doesn't exist
+        log_dir = os.path.dirname(log_file)
+        if log_dir and not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+
+        # Add file handler
+        handlers.append(logging.FileHandler(log_file))
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=handlers,
+    )
+
+    return logging.getLogger("results")
 
 
 def main():
     """Main function to run the test suite"""
+    global logger
     args = parse_args()
 
-    logger.info(
-        f"Starting test suite with ranges: n={args.min_n}-{args.max_n} (step {args.step_n}), "
-        f"m={args.min_m}-{args.max_m} (step {args.step_m}), "
-        f"generators={args.generators}, "
-        f"elim_strategies={args.elim_strategies}, "
-        f"sigmas={args.sigmas}, "
-        f"deltas={args.deltas}, "
-        f"runs={args.runs}"
-    )
-
-    logger.info(f"Using {args.workers} worker processes for parallel execution")
+    log_file = None
 
     # Determine if we're continuing from a previous run
     if args.continue_dir:
-        logger.info(f"Continuing from previous run in directory: {args.continue_dir}")
-        configs = find_missing_configs(args.continue_dir)
+        configs = find_missing_jobs(args.continue_dir)
         output_dir = args.continue_dir  # Use the same output directory
+        log_file = os.path.join(output_dir, log_file) if log_file else None
+        logger = setup_logging(log_file)
+        logger.info(f"Logging to file: {log_file}")
+        logger.info(f"Continuing from previous run in directory: {args.continue_dir}")
     else:
         # Generate new configurations
-        configs = generate_configs(
+        configs = generate_jobs(
             min_n=args.min_n,
             max_n=args.max_n,
             step_n=args.step_n,
@@ -733,8 +744,13 @@ def main():
 
         # Create output directory
         output_dir = create_output_dir(args.output_dir)
-        logger.info(f"Results will be saved to: {output_dir}")
 
+        # Update logger to also log to file
+        log_file = os.path.join(output_dir, log_file) if log_file else None
+        logger = setup_logging(log_file)
+        logger.info(f"Logging to file: {log_file}")
+
+        logger.info(f"Results will be saved to: {output_dir}")
         # Save the final configuration used for this run
         config_to_save = vars(args)
         config_to_save.pop("config", None)
@@ -747,9 +763,21 @@ def main():
         except Exception as e:
             logger.error(f"Error saving configuration to {config_save_path}: {e}")
 
+    logger.info(
+        f"Starting test suite with ranges: n={args.min_n}-{args.max_n} (step {args.step_n}), "
+        f"m={args.min_m}-{args.max_m} (step {args.step_m}), "
+        f"generators={args.generators}, "
+        f"elim_strategies={args.elim_strategies}, "
+        f"sigmas={args.sigmas}, "
+        f"deltas={args.deltas}, "
+        f"runs={args.runs}"
+    )
+
+    logger.info(f"Using {args.workers} worker processes for parallel execution")
+
     # Run the test suite
     run_test_suite(
-        configs=configs,
+        jobs=configs,
         output_dir=output_dir,
         workers=args.workers,
         save_interval=args.save_interval,
